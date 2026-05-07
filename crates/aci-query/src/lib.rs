@@ -1,5 +1,6 @@
 use aci_core::{
     EdgeKind, FileId, GraphEdge, GraphNode, GraphSnapshot, NodeId, NodeKind, SymbolKind,
+    prefer_fact,
 };
 use aci_store::{AdjacencyIndex, build_adjacency};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -41,7 +42,9 @@ impl QueryEngine {
         file: Option<&Path>,
         kind: Option<SymbolKind>,
     ) -> Vec<&GraphNode> {
-        self.symbols()
+        let mut selected = BTreeMap::<SymbolKey, &GraphNode>::new();
+        for node in self
+            .symbols()
             .into_iter()
             .filter(|node| name.is_none_or(|name| node.name.as_deref() == Some(name)))
             .filter(|node| {
@@ -57,7 +60,24 @@ impl QueryEngine {
                         .is_some_and(|path| path == file)
                 })
             })
-            .collect()
+        {
+            let key = SymbolKey::from_node(node);
+            match selected.get(&key) {
+                Some(existing)
+                    if prefer_fact(
+                        (existing.provenance, existing.confidence),
+                        (node.provenance, node.confidence),
+                    ) =>
+                {
+                    selected.insert(key, node);
+                }
+                None => {
+                    selected.insert(key, node);
+                }
+                _ => {}
+            }
+        }
+        selected.into_values().collect()
     }
 
     pub fn file_dependencies(&self, file: &Path) -> Vec<String> {
@@ -206,12 +226,31 @@ impl QueryEngine {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct SymbolKey {
+    file_id: Option<FileId>,
+    name: Option<String>,
+    qualified_name: Option<String>,
+    kind: Option<SymbolKind>,
+}
+
+impl SymbolKey {
+    fn from_node(node: &GraphNode) -> Self {
+        Self {
+            file_id: node.file_id.clone(),
+            name: node.name.clone(),
+            qualified_name: node.qualified_name.clone(),
+            kind: node.symbol_kind,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use aci_core::{
-        EdgeKind, GraphEdge, GraphNode, GraphPartition, Language, NodeKind, RepositoryId,
-        SourceFile, SymbolKind,
+        Confidence, EdgeKind, FactProvenance, GraphEdge, GraphNode, GraphPartition, Language,
+        NodeKind, RepositoryId, SourceFile, SymbolKind,
     };
     use std::path::{Path, PathBuf};
 
@@ -232,7 +271,12 @@ mod tests {
             Language::Python,
             Some("a".to_string()),
             Some("a".to_string()),
-            None,
+            Some(aci_core::SourceSpan::new(
+                0,
+                5,
+                aci_core::LineColumn::new(1, 1),
+                aci_core::LineColumn::new(1, 6),
+            )),
         )
         .with_symbol_kind(SymbolKind::Function);
         let b = GraphNode::deterministic(
@@ -255,5 +299,54 @@ mod tests {
         });
         assert_eq!(engine.lookup_symbols(Some("a"), None, None, None), vec![&a]);
         assert_eq!(engine.callees(&a.id), vec![&b]);
+    }
+
+    #[test]
+    fn lookup_prefers_higher_provenance_duplicate_symbols() {
+        let repo = RepositoryId::new("repo", &["query-quality"]);
+        let file = SourceFile::new(
+            repo.clone(),
+            Path::new("/repo"),
+            PathBuf::from("/repo/app.py"),
+            Language::Python,
+            "def a(): pass\n".to_string(),
+        );
+        let scanner = GraphNode::deterministic(
+            &repo,
+            Some(&file.file_id),
+            NodeKind::Symbol,
+            Language::Python,
+            Some("a".to_string()),
+            Some("a".to_string()),
+            None,
+        )
+        .with_symbol_kind(SymbolKind::Function)
+        .with_fact_quality(FactProvenance::StructuralScanner, Confidence::Medium);
+        let semantic = GraphNode::deterministic(
+            &repo,
+            Some(&file.file_id),
+            NodeKind::Symbol,
+            Language::Python,
+            Some("a".to_string()),
+            Some("a".to_string()),
+            Some(aci_core::SourceSpan::new(
+                0,
+                5,
+                aci_core::LineColumn::new(1, 1),
+                aci_core::LineColumn::new(1, 6),
+            )),
+        )
+        .with_symbol_kind(SymbolKind::Function)
+        .with_fact_quality(FactProvenance::Scip, Confidence::Exact);
+        let mut partition = GraphPartition::empty(&file);
+        partition.nodes = vec![scanner, semantic.clone()];
+
+        let engine = QueryEngine::new(GraphSnapshot {
+            partitions: vec![partition],
+        });
+        assert_eq!(
+            engine.lookup_symbols(Some("a"), None, None, None),
+            vec![&semantic]
+        );
     }
 }

@@ -57,7 +57,7 @@ pub fn default_registry() -> AdapterRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aci_core::{RepositoryId, SourceFile};
+    use aci_core::{EdgeKind, FactProvenance, NodeKind, RepositoryId, SourceFile};
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -208,5 +208,88 @@ mod tests {
             )
             .expect("typescript queries compile");
         }
+    }
+
+    #[test]
+    fn python_tree_sitter_golden_graph_is_stable() {
+        let repo = RepositoryId::new("repo", &["python-golden"]);
+        let file = SourceFile::new(
+            repo,
+            Path::new("."),
+            PathBuf::from("fixtures/python/coverage.py"),
+            Language::Python,
+            include_str!("../fixtures/python/coverage.py").to_string(),
+        );
+        let left = languages::python::extract_python(&file);
+        let right = languages::python::extract_python(&file);
+
+        assert_eq!(
+            symbol_qualified_names(&left),
+            symbol_qualified_names(&right)
+        );
+        assert_eq!(
+            symbol_qualified_names(&left),
+            vec![
+                "coverage",
+                "coverage.Service",
+                "coverage.Service.run",
+                "coverage.main",
+                "coverage.value",
+            ]
+        );
+        assert!(
+            left.nodes
+                .iter()
+                .filter(|node| matches!(node.kind, NodeKind::Symbol | NodeKind::Import))
+                .all(|node| node.provenance == FactProvenance::TreeSitter)
+        );
+        assert!(left.edges.iter().any(|edge| edge.kind == EdgeKind::Calls));
+    }
+
+    #[test]
+    fn typescript_tree_sitter_golden_graph_is_stable() {
+        let repo = RepositoryId::new("repo", &["typescript-golden"]);
+        let file = SourceFile::new(
+            repo,
+            Path::new("."),
+            PathBuf::from("fixtures/typescript/coverage.ts"),
+            Language::TypeScript,
+            include_str!("../fixtures/typescript/coverage.ts").to_string(),
+        );
+        let left = languages::typescript::extract_typescript(&file);
+        let right = languages::typescript::extract_typescript(&file);
+
+        assert_eq!(
+            symbol_qualified_names(&left),
+            symbol_qualified_names(&right)
+        );
+        assert_eq!(
+            symbol_qualified_names(&left),
+            vec![
+                "coverage",
+                "coverage.Service",
+                "coverage.Service.run",
+                "coverage.local",
+                "coverage.main",
+            ]
+        );
+        assert!(
+            left.nodes
+                .iter()
+                .filter(|node| matches!(node.kind, NodeKind::Symbol | NodeKind::Import))
+                .all(|node| node.provenance == FactProvenance::TreeSitter)
+        );
+        assert!(left.edges.iter().any(|edge| edge.kind == EdgeKind::Exports));
+    }
+
+    fn symbol_qualified_names(partition: &GraphPartition) -> Vec<&str> {
+        let mut names = partition
+            .nodes
+            .iter()
+            .filter(|node| node.kind == NodeKind::Symbol)
+            .filter_map(|node| node.qualified_name.as_deref())
+            .collect::<Vec<_>>();
+        names.sort_unstable();
+        names
     }
 }

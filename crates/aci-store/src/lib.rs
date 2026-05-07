@@ -1,4 +1,4 @@
-use aci_core::{EdgeKind, GraphEdge, GraphPartition, GraphSnapshot, NodeId, Result};
+use aci_core::{EdgeKind, GraphEdge, GraphPartition, GraphSnapshot, NodeId, NodeKind, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, OpenOptions};
@@ -231,19 +231,47 @@ pub fn check_snapshot_integrity(snapshot: &GraphSnapshot) -> Vec<String> {
         .flat_map(|partition| partition.nodes.iter().map(|node| node.id.clone()))
         .collect();
     let mut problems = Vec::new();
-    for edge in snapshot
-        .partitions
-        .iter()
-        .flat_map(|partition| &partition.edges)
-    {
-        if !nodes.contains(&edge.from) {
-            problems.push(format!("edge {} has missing source {}", edge.id, edge.from));
+    for partition in &snapshot.partitions {
+        for node in &partition.nodes {
+            if node.kind == NodeKind::Symbol && node.file_id.is_none() {
+                problems.push(format!("symbol {} has no file", node.id));
+            }
+            if let Some(file_id) = &node.file_id
+                && file_id != &partition.file_id
+            {
+                problems.push(format!(
+                    "node {} belongs to file {} but is stored in partition {}",
+                    node.id, file_id, partition.file_id
+                ));
+            }
+            if let Some(span) = &node.span {
+                validate_span(&mut problems, &format!("node {}", node.id), span);
+            }
         }
-        if !nodes.contains(&edge.to) && edge.kind != EdgeKind::DependsOn {
-            problems.push(format!("edge {} has missing target {}", edge.id, edge.to));
+        for edge in &partition.edges {
+            if !nodes.contains(&edge.from) {
+                problems.push(format!("edge {} has missing source {}", edge.id, edge.from));
+            }
+            if !nodes.contains(&edge.to) && edge.kind != EdgeKind::DependsOn {
+                problems.push(format!("edge {} has missing target {}", edge.id, edge.to));
+            }
+            if let Some(span) = &edge.span {
+                validate_span(&mut problems, &format!("edge {}", edge.id), span);
+            }
         }
     }
     problems
+}
+
+fn validate_span(problems: &mut Vec<String>, owner: &str, span: &aci_core::SourceSpan) {
+    if span.byte_start > span.byte_end {
+        problems.push(format!("{owner} has an invalid byte span"));
+    }
+    if span.start.line > span.end.line
+        || (span.start.line == span.end.line && span.start.column > span.end.column)
+    {
+        problems.push(format!("{owner} has an invalid line/column span"));
+    }
 }
 
 fn partition_filename(file_id: &str) -> PathBuf {
@@ -311,5 +339,77 @@ mod tests {
         let latest = store.load_latest().expect("load latest");
         assert_eq!(latest.partitions.len(), 1);
         assert_eq!(latest.partitions[0].fingerprint, replacement.fingerprint);
+    }
+
+    #[test]
+    fn integrity_check_rejects_symbols_without_files() {
+        let repo = RepositoryId::new("repo", &["integrity-symbol"]);
+        let file = SourceFile::new(
+            repo.clone(),
+            Path::new("/repo"),
+            PathBuf::from("/repo/a.py"),
+            Language::Python,
+            "def a(): pass\n".to_string(),
+        );
+        let mut partition = GraphPartition::empty(&file);
+        partition.nodes.push(GraphNode::deterministic(
+            &repo,
+            None,
+            NodeKind::Symbol,
+            Language::Python,
+            Some("a".to_string()),
+            Some("a".to_string()),
+            None,
+        ));
+
+        let problems = check_snapshot_integrity(&GraphSnapshot {
+            partitions: vec![partition],
+        });
+        assert!(problems.iter().any(|problem| problem.contains("no file")));
+    }
+
+    #[test]
+    fn integrity_check_rejects_missing_edge_targets_and_bad_spans() {
+        let repo = RepositoryId::new("repo", &["integrity-edge"]);
+        let file = SourceFile::new(
+            repo.clone(),
+            Path::new("/repo"),
+            PathBuf::from("/repo/a.py"),
+            Language::Python,
+            "def a(): pass\n".to_string(),
+        );
+        let file_node = GraphNode::deterministic(
+            &repo,
+            Some(&file.file_id),
+            NodeKind::File,
+            Language::Python,
+            Some("a.py".to_string()),
+            Some("a.py".to_string()),
+            Some(aci_core::SourceSpan::new(
+                10,
+                1,
+                aci_core::LineColumn::new(2, 1),
+                aci_core::LineColumn::new(1, 1),
+            )),
+        );
+        let missing = NodeId::from_raw("node:missing");
+        let edge = GraphEdge::deterministic(EdgeKind::References, &file_node.id, &missing, None);
+        let mut partition = GraphPartition::empty(&file);
+        partition.nodes.push(file_node);
+        partition.edges.push(edge);
+
+        let problems = check_snapshot_integrity(&GraphSnapshot {
+            partitions: vec![partition],
+        });
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.contains("missing target"))
+        );
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.contains("invalid byte span"))
+        );
     }
 }

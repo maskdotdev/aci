@@ -34,6 +34,7 @@ pub enum JsonlRecord {
     Partition {
         file_id: String,
         path: String,
+        language: Language,
         fingerprint: String,
     },
     Node {
@@ -114,11 +115,12 @@ pub fn import_jsonl<R: BufRead>(reader: R) -> Result<GraphSnapshot> {
             JsonlRecord::Partition {
                 file_id,
                 path,
+                language,
                 fingerprint,
             } => partitions.push(GraphPartition {
                 file_id: aci_core::FileId::from_raw(file_id),
                 path: path.into(),
-                language: aci_core::Language::Unknown,
+                language,
                 fingerprint,
                 nodes: Vec::new(),
                 edges: Vec::new(),
@@ -129,7 +131,6 @@ pub fn import_jsonl<R: BufRead>(reader: R) -> Result<GraphSnapshot> {
                     .iter_mut()
                     .find(|item| item.file_id.as_str() == partition)
                 {
-                    target.language = node.language;
                     target.nodes.push(node);
                 }
             }
@@ -386,6 +387,7 @@ fn write_jsonl<W: Write>(snapshot: &GraphSnapshot, mut writer: W) -> Result<()> 
             &JsonlRecord::Partition {
                 file_id: partition.file_id.to_string(),
                 path: partition.path.to_string_lossy().to_string(),
+                language: partition.language,
                 fingerprint: partition.fingerprint.clone(),
             },
         )?;
@@ -521,11 +523,7 @@ mod tests {
         let mut bytes = Vec::new();
         export_snapshot(&snapshot, ExportFormat::Jsonl, &mut bytes).expect("export");
         let imported = import_jsonl(BufReader::new(bytes.as_slice())).expect("import");
-        assert_eq!(imported.partitions.len(), 1);
-        assert_eq!(
-            imported.partitions[0].fingerprint,
-            snapshot.partitions[0].fingerprint
-        );
+        assert_eq!(imported, snapshot);
     }
 
     #[test]
