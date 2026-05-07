@@ -17,7 +17,7 @@ pub fn detect_javascript(path: &Path, bytes: &[u8]) -> bool {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("");
-    if matches!(filename, "package.json" | "vite.config.js") {
+    if matches!(filename, "vite.config.js") {
         return true;
     }
     detect_node_shebang(bytes)

@@ -267,6 +267,10 @@ pub fn python_language() -> TreeSitterLanguage {
     tree_sitter_python::LANGUAGE.into()
 }
 
+pub fn rust_language() -> TreeSitterLanguage {
+    tree_sitter_rust::LANGUAGE.into()
+}
+
 pub fn javascript_language() -> TreeSitterLanguage {
     tree_sitter_javascript::LANGUAGE.into()
 }

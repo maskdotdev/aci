@@ -23,6 +23,8 @@ impl AdapterRegistry {
 
     pub fn with_defaults() -> Self {
         Self::new()
+            .register(languages::json::JsonAdapter)
+            .register(languages::rust::RustAdapter)
             .register(languages::typescript::JavaScriptAdapter)
             .register(languages::typescript::TypeScriptAdapter)
             .register(languages::python::PythonAdapter)
@@ -71,6 +73,14 @@ mod tests {
             registry.detect_language(Path::new("tools/build.py"), b"#!/usr/bin/env python\n"),
             Language::Python
         );
+        assert_eq!(
+            registry.detect_language(Path::new("crates/app/src/lib.rs"), b"pub fn app() {}"),
+            Language::Rust
+        );
+        assert_eq!(
+            registry.detect_language(Path::new("package.json"), br#"{ "name": "app" }"#),
+            Language::Json
+        );
     }
 
     #[test]
@@ -89,6 +99,18 @@ mod tests {
                 include_str!("../fixtures/python/coverage.py"),
                 Language::Python,
                 ["Service", "run", "main", "value"].as_slice(),
+            ),
+            (
+                PathBuf::from("fixtures/rust/coverage.rs"),
+                include_str!("../fixtures/rust/coverage.rs"),
+                Language::Rust,
+                ["Service", "run", "Mode", "Runner", "main"].as_slice(),
+            ),
+            (
+                PathBuf::from("fixtures/json/package.json"),
+                include_str!("../fixtures/json/package.json"),
+                Language::Json,
+                ["package.json", "fixture-package"].as_slice(),
             ),
         ];
 
@@ -127,6 +149,11 @@ mod tests {
                 PathBuf::from("fixtures/python/syntax-error.py"),
                 include_str!("../fixtures/python/syntax-error.py"),
                 Language::Python,
+            ),
+            (
+                PathBuf::from("fixtures/rust/syntax-error.rs"),
+                include_str!("../fixtures/rust/syntax-error.rs"),
+                Language::Rust,
             ),
         ] {
             let file = SourceFile::new(
@@ -208,6 +235,29 @@ mod tests {
             )
             .expect("typescript queries compile");
         }
+
+        let rust = tree_sitter::rust_language();
+        tree_sitter::validate_queries(
+            &rust,
+            &[
+                tree_sitter::QuerySource::new(
+                    "symbols.scm",
+                    "languages/rust/queries/symbols.scm",
+                    include_str!("languages/rust/queries/symbols.scm"),
+                ),
+                tree_sitter::QuerySource::new(
+                    "imports.scm",
+                    "languages/rust/queries/imports.scm",
+                    include_str!("languages/rust/queries/imports.scm"),
+                ),
+                tree_sitter::QuerySource::new(
+                    "calls.scm",
+                    "languages/rust/queries/calls.scm",
+                    include_str!("languages/rust/queries/calls.scm"),
+                ),
+            ],
+        )
+        .expect("rust queries compile");
     }
 
     #[test]
@@ -280,6 +330,56 @@ mod tests {
                 .all(|node| node.provenance == FactProvenance::TreeSitter)
         );
         assert!(left.edges.iter().any(|edge| edge.kind == EdgeKind::Exports));
+    }
+
+    #[test]
+    fn rust_tree_sitter_golden_graph_is_stable() {
+        let repo = RepositoryId::new("repo", &["rust-golden"]);
+        let file = SourceFile::new(
+            repo,
+            Path::new("."),
+            PathBuf::from("fixtures/rust/coverage.rs"),
+            Language::Rust,
+            include_str!("../fixtures/rust/coverage.rs").to_string(),
+        );
+        let left = languages::rust::extract_rust(&file);
+        let right = languages::rust::extract_rust(&file);
+
+        assert_eq!(
+            symbol_qualified_names(&left),
+            symbol_qualified_names(&right)
+        );
+        assert!(
+            symbol_qualified_names(&left)
+                .iter()
+                .any(|name| *name == "coverage::Service")
+        );
+        assert!(left.edges.iter().any(|edge| edge.kind == EdgeKind::Calls));
+    }
+
+    #[test]
+    fn json_package_dependencies_are_indexed() {
+        let repo = RepositoryId::new("repo", &["json-golden"]);
+        let file = SourceFile::new(
+            repo,
+            Path::new("."),
+            PathBuf::from("fixtures/json/package.json"),
+            Language::Json,
+            include_str!("../fixtures/json/package.json").to_string(),
+        );
+        let partition = languages::json::extract_json(&file);
+        assert!(
+            partition
+                .nodes
+                .iter()
+                .any(|node| node.name.as_deref() == Some("react"))
+        );
+        assert!(
+            partition
+                .edges
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::DependsOn)
+        );
     }
 
     fn symbol_qualified_names(partition: &GraphPartition) -> Vec<&str> {

@@ -68,6 +68,7 @@ pub type PackageId = Id<PackageTag>;
 #[serde(rename_all = "kebab-case")]
 pub enum Language {
     JavaScript,
+    Json,
     TypeScript,
     Python,
     Rust,
@@ -78,6 +79,7 @@ impl Language {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::JavaScript => "javascript",
+            Self::Json => "json",
             Self::TypeScript => "typescript",
             Self::Python => "python",
             Self::Rust => "rust",

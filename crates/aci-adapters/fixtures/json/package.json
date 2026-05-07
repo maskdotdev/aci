@@ -1,0 +1,13 @@
+{
+  "name": "fixture-package",
+  "dependencies": {
+    "react": "^19.0.0",
+    "next": "canary"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "exports": {
+    ".": "./index.js"
+  }
+}

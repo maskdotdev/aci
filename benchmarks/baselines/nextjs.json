@@ -1,11 +1,13 @@
 {
-  "commit": "9e1830338642762337a0c4435e5ca6234a6a3872",
+  "commit": "300993781541bf7a35789e22adb0333bf9c44caf",
   "coverage": {
     "detected_languages": {
-      "javascript": 10896,
+      "javascript": 10280,
+      "json": 1306,
       "python": 1,
+      "rust": 966,
       "typescript": 10346,
-      "unknown": 5883
+      "unknown": 4227
     },
     "extensions": {
       ".cjs": 92,
@@ -41,17 +43,18 @@
     },
     "skipped": {
       "binary": 656,
-      "vendor_or_generated": 1067
+      "vendor_or_generated": 1068
     },
-    "total_files": 28849,
+    "total_files": 28850,
     "unknown_extensions": {
+      ".approvers": 4,
       ".css": 658,
       ".data": 7,
       ".development": 6,
       ".dockerfile": 5,
       ".example": 80,
+      ".graphql": 5,
       ".html": 14,
-      ".json": 669,
       ".local": 9,
       ".lock": 5,
       ".map": 272,
@@ -60,7 +63,6 @@
       ".node": 6,
       ".patch": 12,
       ".pem": 8,
-      ".rs": 966,
       ".sass": 10,
       ".scss": 193,
       ".sh": 28,
@@ -69,8 +71,8 @@
       ".stderr": 102,
       ".svg": 210,
       ".toml": 78,
+      ".trs": 5,
       ".txt": 241,
-      ".webmanifest": 21,
       ".xml": 30,
       ".yaml": 38,
       ".yml": 72,
@@ -79,14 +81,16 @@
   },
   "metrics": {
     "cold_diagnostics": 0,
-    "cold_extraction_seconds_per_file": 0.000621476,
-    "cold_index_files": 20278,
-    "cold_index_seconds": 2.365873,
+    "cold_extraction_seconds_per_file": 0.000939858,
+    "cold_index_files": 21847,
+    "cold_index_seconds": 4.023355,
     "cold_index_variant": "tree-sitter-fallback",
-    "cold_language_javascript_files": 9983,
+    "cold_language_javascript_files": 9519,
+    "cold_language_json_files": 1067,
     "cold_language_python_files": 1,
+    "cold_language_rust_files": 966,
     "cold_language_typescript_files": 10294,
-    "cold_parse_seconds_per_file": 0.000329776,
+    "cold_parse_seconds_per_file": 0.000514421,
     "cold_query_captures_per_file": 0.0,
     "cold_skipped_files": 1615
   },

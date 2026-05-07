@@ -58,7 +58,13 @@ def is_vendor_or_generated(path: Path) -> bool:
     )
 
 def is_binary(data: bytes) -> bool:
-    return b"\0" in data[:8192]
+    if b"\0" in data[:8192]:
+        return True
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return True
+    return False
 
 def detected_language(path: Path, data: bytes) -> str:
     extension = path.suffix.lower().lstrip(".")
@@ -74,11 +80,15 @@ def detected_language(path: Path, data: bytes) -> str:
         or (first.startswith("#!") and "python" in first)
     ):
         return "python"
+    if extension in {"json", "webmanifest"} or filename in {"package-lock.json", "tsconfig"}:
+        return "json"
+    if extension == "rs" or (first.startswith("#!") and "rust-script" in first):
+        return "rust"
     if extension in {"ts", "tsx", "mts", "cts"}:
         return "typescript"
     if (
         extension in {"js", "jsx", "mjs", "cjs"}
-        or filename in {"package.json", "vite.config.js"}
+        or filename == "vite.config.js"
         or (first.startswith("#!") and "node" in first)
     ):
         return "javascript"

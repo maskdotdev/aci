@@ -152,6 +152,11 @@ impl<'a> PartitionBuilder<'a> {
         self.add_edge(EdgeKind::References, from, target_id, Some(span));
     }
 
+    pub fn add_dependency(&mut self, from: NodeId, package: &str, span: SourceSpan) {
+        let package_id = self.add_external(NodeKind::Package, package, None);
+        self.add_edge(EdgeKind::DependsOn, from, package_id, Some(span));
+    }
+
     pub fn add_diagnostic(&mut self, diagnostic: Diagnostic) {
         self.partition.diagnostics.push(diagnostic);
     }
