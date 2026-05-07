@@ -1,0 +1,13 @@
+[package]
+name = "aci-query"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+aci-core.workspace = true
+aci-store.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

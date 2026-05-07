@@ -1,0 +1,113 @@
+use aci_core::Result;
+use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::time::{Duration, Instant};
+
+#[derive(Clone, Debug)]
+pub struct WatchOptions {
+    pub root: PathBuf,
+    pub debounce: Duration,
+}
+
+impl WatchOptions {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self {
+            root: root.into(),
+            debounce: Duration::from_millis(150),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CoalescedChanges {
+    pub paths: Vec<PathBuf>,
+}
+
+pub fn coalesce_events(events: &[Event]) -> CoalescedChanges {
+    let paths = events
+        .iter()
+        .flat_map(|event| event.paths.iter().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    CoalescedChanges { paths }
+}
+
+pub fn watch_until_quiet(options: WatchOptions, max_wait: Duration) -> Result<CoalescedChanges> {
+    let (tx, rx) = mpsc::channel();
+    let mut watcher: RecommendedWatcher = notify::recommended_watcher(move |event| {
+        let _ = tx.send(event);
+    })
+    .map_err(|error| aci_core::AciError::Message(error.to_string()))?;
+    watcher
+        .watch(Path::new(&options.root), RecursiveMode::Recursive)
+        .map_err(|error| aci_core::AciError::Message(error.to_string()))?;
+
+    let deadline = Instant::now() + max_wait;
+    let mut last_event_at = None;
+    let mut events = Vec::new();
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
+            break;
+        }
+        if last_event_at.is_some_and(|last| now.duration_since(last) >= options.debounce) {
+            break;
+        }
+        let timeout = options
+            .debounce
+            .min(deadline.saturating_duration_since(now));
+        match rx.recv_timeout(timeout) {
+            Ok(Ok(event)) => {
+                last_event_at = Some(Instant::now());
+                events.push(event);
+            }
+            Ok(Err(error)) => return Err(aci_core::AciError::Message(error.to_string())),
+            Err(RecvTimeoutError::Timeout) if !events.is_empty() => break,
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    Ok(coalesce_events(&events))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use notify::{EventKind, event::ModifyKind};
+    use std::fs;
+    use std::thread;
+
+    #[test]
+    fn coalesces_duplicate_event_paths() {
+        let path = PathBuf::from("src/lib.rs");
+        let event = Event {
+            kind: EventKind::Modify(ModifyKind::Data(notify::event::DataChange::Content)),
+            paths: vec![path.clone(), path.clone()],
+            attrs: Default::default(),
+        };
+        assert_eq!(coalesce_events(&[event]).paths, vec![path]);
+    }
+
+    #[test]
+    fn watch_until_quiet_observes_file_change() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("changed.py");
+        let writer_target = target.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(100));
+            fs::write(writer_target, "def changed():\n    pass\n").expect("write changed file");
+        });
+
+        let changes = watch_until_quiet(WatchOptions::new(dir.path()), Duration::from_secs(3))
+            .expect("watch changes");
+        assert!(
+            changes
+                .paths
+                .iter()
+                .any(|path| path.ends_with("changed.py"))
+        );
+    }
+}
