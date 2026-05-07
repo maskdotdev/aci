@@ -1,8 +1,8 @@
 use crate::helpers::{PartitionBuilder, first_identifier_after, quoted_module, read_identifier};
 use crate::languages::typescript::scanner::scanner_extract_typescript;
 use crate::tree_sitter::{
-    ExtractionMode, ParseLimits, ParseSkip, ParserPool, child_by_field_name, count_query_captures,
-    javascript_language, node_span, node_text, tsx_language, typescript_language, validate_queries,
+    ExtractionMode, ParseLimits, ParseSkip, ParserPool, child_by_field_name, javascript_language,
+    node_span, node_text, tsx_language, typescript_language,
 };
 use aci_core::{
     Confidence, Diagnostic, FactProvenance, GraphPartition, Language, NodeId, SourceFile,
@@ -14,10 +14,6 @@ use std::sync::OnceLock;
 static JAVASCRIPT_POOL: OnceLock<ParserPool> = OnceLock::new();
 static TYPESCRIPT_POOL: OnceLock<ParserPool> = OnceLock::new();
 static TSX_POOL: OnceLock<ParserPool> = OnceLock::new();
-
-const SYMBOLS_QUERY: &str = include_str!("queries/symbols.scm");
-const IMPORTS_QUERY: &str = include_str!("queries/imports.scm");
-const CALLS_QUERY: &str = include_str!("queries/calls.scm");
 
 pub fn extract_typescript(file: &SourceFile) -> GraphPartition {
     match ExtractionMode::current() {
@@ -55,75 +51,6 @@ fn tree_sitter_extract_typescript(file: &SourceFile, fallback: bool) -> GraphPar
         }
     };
 
-    let mut query_captures = 0_u64;
-    if grammar != Grammar::JavaScript {
-        let language = match grammar {
-            Grammar::TypeScript => typescript_language(),
-            Grammar::Tsx => tsx_language(),
-            Grammar::JavaScript => unreachable!(),
-        };
-        match validate_queries(
-            &language,
-            &[
-                crate::tree_sitter::QuerySource::new(
-                    "symbols.scm",
-                    "typescript/queries/symbols.scm",
-                    SYMBOLS_QUERY,
-                ),
-                crate::tree_sitter::QuerySource::new(
-                    "imports.scm",
-                    "typescript/queries/imports.scm",
-                    IMPORTS_QUERY,
-                ),
-                crate::tree_sitter::QuerySource::new(
-                    "calls.scm",
-                    "typescript/queries/calls.scm",
-                    CALLS_QUERY,
-                ),
-            ],
-        ) {
-            Ok(queries) => {
-                for query in queries {
-                    match count_query_captures(&query, report.tree.root_node(), &file.text, limits)
-                    {
-                        Ok(count) => query_captures += count as u64,
-                        Err(message) => {
-                            let mut partition = if fallback {
-                                scanner_extract_typescript(file)
-                            } else {
-                                GraphPartition::empty(file)
-                            };
-                            partition.diagnostics.push(Diagnostic::warning(
-                                message,
-                                Some(file.file_id.clone()),
-                                None,
-                            ));
-                            return partition;
-                        }
-                    }
-                }
-            }
-            Err(message) if fallback => {
-                let mut partition = scanner_extract_typescript(file);
-                partition.diagnostics.push(Diagnostic::warning(
-                    message,
-                    Some(file.file_id.clone()),
-                    None,
-                ));
-                return partition;
-            }
-            Err(message) => {
-                let mut partition = GraphPartition::empty(file);
-                partition.diagnostics.push(Diagnostic::warning(
-                    message,
-                    Some(file.file_id.clone()),
-                    None,
-                ));
-                return partition;
-            }
-        }
-    }
-
     let mut builder =
         PartitionBuilder::new_with_quality(file, FactProvenance::TreeSitter, Confidence::High);
     builder.add_diagnostics(report.diagnostics);
@@ -151,7 +78,6 @@ fn tree_sitter_extract_typescript(file: &SourceFile, fallback: bool) -> GraphPar
     );
     let mut partition = crate::languages::typescript::resolve_partition(builder.finish());
     partition.metrics.parse_time_micros = report.parse_time.as_micros() as u64;
-    partition.metrics.query_captures = query_captures;
     partition
 }
 

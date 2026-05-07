@@ -2,6 +2,7 @@ use aci_core::{
     Confidence, Diagnostic, EdgeKind, FactProvenance, GraphEdge, GraphNode, GraphPartition,
     Language, LineColumn, NodeId, NodeKind, SourceFile, SourceSpan, SymbolKind,
 };
+use std::collections::BTreeSet;
 
 pub struct PartitionBuilder<'a> {
     file: &'a SourceFile,
@@ -9,6 +10,8 @@ pub struct PartitionBuilder<'a> {
     file_node: NodeId,
     provenance: FactProvenance,
     confidence: Confidence,
+    node_ids: BTreeSet<NodeId>,
+    edge_ids: BTreeSet<aci_core::EdgeId>,
 }
 
 impl<'a> PartitionBuilder<'a> {
@@ -37,6 +40,8 @@ impl<'a> PartitionBuilder<'a> {
         )
         .with_fact_quality(provenance, confidence);
         let file_node_id = file_node.id.clone();
+        let mut node_ids = BTreeSet::new();
+        node_ids.insert(file_node_id.clone());
         partition.nodes.push(file_node);
         Self {
             file,
@@ -44,6 +49,8 @@ impl<'a> PartitionBuilder<'a> {
             file_node: file_node_id,
             provenance,
             confidence,
+            node_ids,
+            edge_ids: BTreeSet::new(),
         }
     }
 
@@ -70,6 +77,7 @@ impl<'a> PartitionBuilder<'a> {
         .with_symbol_kind(kind)
         .with_fact_quality(self.provenance, self.confidence);
         let id = node.id.clone();
+        self.node_ids.insert(id.clone());
         self.partition.nodes.push(node);
         self.add_edge(
             EdgeKind::Defines,
@@ -96,6 +104,7 @@ impl<'a> PartitionBuilder<'a> {
         )
         .with_fact_quality(self.provenance, self.confidence);
         let import_id = import_node.id.clone();
+        self.node_ids.insert(import_id.clone());
         self.partition.nodes.push(import_node);
         let package_id = self.add_external(NodeKind::Package, specifier, None);
         self.add_edge(EdgeKind::Imports, import_id.clone(), package_id, Some(span));
@@ -120,6 +129,7 @@ impl<'a> PartitionBuilder<'a> {
         )
         .with_fact_quality(self.provenance, self.confidence);
         let export_id = export_node.id.clone();
+        self.node_ids.insert(export_id.clone());
         self.partition.nodes.push(export_node);
         self.add_edge(
             EdgeKind::Exports,
@@ -172,12 +182,7 @@ impl<'a> PartitionBuilder<'a> {
         .with_fact_quality(self.provenance, self.confidence);
         node.symbol_kind = symbol_kind;
         let id = node.id.clone();
-        if !self
-            .partition
-            .nodes
-            .iter()
-            .any(|existing| existing.id == id)
-        {
+        if self.node_ids.insert(id.clone()) {
             self.partition.nodes.push(node);
         }
         id
@@ -186,12 +191,7 @@ impl<'a> PartitionBuilder<'a> {
     fn add_edge(&mut self, kind: EdgeKind, from: NodeId, to: NodeId, span: Option<SourceSpan>) {
         let edge = GraphEdge::deterministic(kind, &from, &to, span)
             .with_fact_quality(self.provenance, self.confidence);
-        if !self
-            .partition
-            .edges
-            .iter()
-            .any(|existing| existing.id == edge.id)
-        {
+        if self.edge_ids.insert(edge.id.clone()) {
             self.partition.edges.push(edge);
         }
     }

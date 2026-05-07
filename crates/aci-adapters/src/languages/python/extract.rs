@@ -2,8 +2,8 @@ use crate::helpers::{
     PartitionBuilder, call_identifiers, first_identifier_after, line_span, read_identifier,
 };
 use crate::tree_sitter::{
-    ExtractionMode, ParseLimits, ParseSkip, ParserPool, child_by_field_name, count_query_captures,
-    node_span, node_text, python_language, validate_queries,
+    ExtractionMode, ParseLimits, ParseSkip, ParserPool, child_by_field_name, node_span, node_text,
+    python_language,
 };
 use aci_core::{
     Confidence, Diagnostic, FactProvenance, GraphPartition, NodeId, SourceFile, SymbolKind,
@@ -11,10 +11,6 @@ use aci_core::{
 use std::sync::OnceLock;
 
 static PYTHON_POOL: OnceLock<ParserPool> = OnceLock::new();
-
-const SYMBOLS_QUERY: &str = include_str!("queries/symbols.scm");
-const IMPORTS_QUERY: &str = include_str!("queries/imports.scm");
-const CALLS_QUERY: &str = include_str!("queries/calls.scm");
 
 pub fn extract_python(file: &SourceFile) -> GraphPartition {
     match ExtractionMode::current() {
@@ -42,68 +38,6 @@ fn tree_sitter_extract_python(file: &SourceFile, fallback: bool) -> GraphPartiti
             return partition;
         }
     };
-
-    let language = python_language();
-    let mut query_captures = 0_u64;
-    match validate_queries(
-        &language,
-        &[
-            crate::tree_sitter::QuerySource::new(
-                "symbols.scm",
-                "python/queries/symbols.scm",
-                SYMBOLS_QUERY,
-            ),
-            crate::tree_sitter::QuerySource::new(
-                "imports.scm",
-                "python/queries/imports.scm",
-                IMPORTS_QUERY,
-            ),
-            crate::tree_sitter::QuerySource::new(
-                "calls.scm",
-                "python/queries/calls.scm",
-                CALLS_QUERY,
-            ),
-        ],
-    ) {
-        Ok(queries) => {
-            for query in queries {
-                match count_query_captures(&query, report.tree.root_node(), &file.text, limits) {
-                    Ok(count) => query_captures += count as u64,
-                    Err(message) => {
-                        let mut partition = if fallback {
-                            scanner_extract_python(file)
-                        } else {
-                            GraphPartition::empty(file)
-                        };
-                        partition.diagnostics.push(Diagnostic::warning(
-                            message,
-                            Some(file.file_id.clone()),
-                            None,
-                        ));
-                        return partition;
-                    }
-                }
-            }
-        }
-        Err(message) if fallback => {
-            let mut partition = scanner_extract_python(file);
-            partition.diagnostics.push(Diagnostic::warning(
-                message,
-                Some(file.file_id.clone()),
-                None,
-            ));
-            return partition;
-        }
-        Err(message) => {
-            let mut partition = GraphPartition::empty(file);
-            partition.diagnostics.push(Diagnostic::warning(
-                message,
-                Some(file.file_id.clone()),
-                None,
-            ));
-            return partition;
-        }
-    }
 
     let mut builder =
         PartitionBuilder::new_with_quality(file, FactProvenance::TreeSitter, Confidence::High);
@@ -133,7 +67,6 @@ fn tree_sitter_extract_python(file: &SourceFile, fallback: bool) -> GraphPartiti
     );
     let mut partition = crate::languages::python::resolve_partition(builder.finish());
     partition.metrics.parse_time_micros = report.parse_time.as_micros() as u64;
-    partition.metrics.query_captures = query_captures;
     partition
 }
 
