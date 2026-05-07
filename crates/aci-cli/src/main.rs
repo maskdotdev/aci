@@ -6,6 +6,7 @@ use aci_query::QueryEngine;
 use aci_store::GraphStore;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -279,9 +280,20 @@ fn bench(args: BenchArgs) -> Result<()> {
                 .iter()
                 .map(|partition| partition.metrics.query_captures)
                 .sum::<u64>();
+            let mut language_counts = BTreeMap::new();
+            for partition in &report.partitions {
+                *language_counts
+                    .entry(partition.language.as_str())
+                    .or_insert(0_usize) += 1;
+            }
             println!("cold_index_variant={}", mode.as_str());
             println!("cold_index_files={}", report.partitions.len());
+            println!("cold_skipped_files={}", report.skipped.len());
+            println!("cold_diagnostics={}", report.diagnostics.len());
             println!("cold_index_seconds={elapsed:.6}");
+            for (language, count) in language_counts {
+                println!("cold_language_{language}_files={count}");
+            }
             println!(
                 "cold_parse_seconds_per_file={:.9}",
                 parse_micros as f64 / 1_000_000.0 / files as f64
