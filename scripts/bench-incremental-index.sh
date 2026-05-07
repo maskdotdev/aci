@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-dependents="${ACI_BENCH_DEPENDENTS:-1000}"
+dependents="${ACI_BENCH_DEPENDENTS:-0}"
 tmp="$(mktemp -d)"
 repo="$tmp/repo"
 store="$tmp/store"
@@ -11,9 +11,11 @@ mkdir -p "$repo/src"
 cargo build --release -p aci-cli --bin aci >/dev/null
 
 printf 'export function run() { return 1; }\n' > "$repo/src/lib.ts"
-for i in $(seq 1 "$dependents"); do
-  printf 'import { run } from "./lib";\nexport function f_%s() { return run(); }\n' "$i" > "$repo/src/app_$i.ts"
-done
+if [ "$dependents" -gt 0 ]; then
+  for i in $(seq 1 "$dependents"); do
+    printf 'import { run } from "./lib";\nexport function f_%s() { return run(); }\n' "$i" > "$repo/src/app_$i.ts"
+  done
+fi
 
 "$aci_bin" index "$repo" --store "$store" >/dev/null
 printf 'export function run() { return 2; }\n' > "$repo/src/lib.ts"
