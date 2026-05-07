@@ -381,6 +381,8 @@ pub struct GraphPartition {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
     pub diagnostics: Vec<Diagnostic>,
+    #[serde(default)]
+    pub metrics: PartitionMetrics,
 }
 
 impl GraphPartition {
@@ -393,8 +395,16 @@ impl GraphPartition {
             nodes: Vec::new(),
             edges: Vec::new(),
             diagnostics: Vec::new(),
+            metrics: PartitionMetrics::default(),
         }
     }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PartitionMetrics {
+    pub parse_time_micros: u64,
+    pub extraction_time_micros: u64,
+    pub query_captures: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

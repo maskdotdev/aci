@@ -10,6 +10,7 @@ name = "aci"
 path = "src/main.rs"
 
 [dependencies]
+aci-adapters.workspace = true
 aci-core.workspace = true
 aci-export.workspace = true
 aci-indexer.workspace = true

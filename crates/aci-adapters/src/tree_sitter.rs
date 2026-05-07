@@ -1,6 +1,7 @@
 use aci_core::{Diagnostic, FileId, LineColumn, SourceSpan};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 use tree_sitter::{
     Language as TreeSitterLanguage, Node, Parser, Query, QueryCursor, StreamingIterator, Tree,
@@ -10,6 +11,7 @@ pub const DEFAULT_MAX_FILE_BYTES: usize = 2 * 1024 * 1024;
 pub const DEFAULT_MAX_QUERY_CAPTURES: usize = 100_000;
 pub const DEFAULT_PARSE_TIMEOUT: Duration = Duration::from_millis(250);
 pub const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_millis(250);
+static EXTRACTION_MODE_OVERRIDE: AtomicU8 = AtomicU8::new(0);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExtractionMode {
@@ -20,7 +22,14 @@ pub enum ExtractionMode {
 }
 
 impl ExtractionMode {
-    pub fn from_env() -> Self {
+    pub fn current() -> Self {
+        match EXTRACTION_MODE_OVERRIDE.load(Ordering::Relaxed) {
+            1 => return Self::ScannerOnly,
+            2 => return Self::TreeSitterOnly,
+            3 => return Self::TreeSitterWithFallback,
+            4 => return Self::TreeSitterWithEnrichment,
+            _ => {}
+        }
         match std::env::var("ACI_EXTRACTION_MODE").as_deref() {
             Ok("scanner-only") => Self::ScannerOnly,
             Ok("tree-sitter-only") => Self::TreeSitterOnly,
@@ -28,6 +37,25 @@ impl ExtractionMode {
             _ => Self::TreeSitterWithFallback,
         }
     }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ScannerOnly => "scanner-only",
+            Self::TreeSitterOnly => "tree-sitter-only",
+            Self::TreeSitterWithFallback => "tree-sitter-fallback",
+            Self::TreeSitterWithEnrichment => "tree-sitter-enrichment",
+        }
+    }
+}
+
+pub fn set_extraction_mode(mode: ExtractionMode) {
+    let value = match mode {
+        ExtractionMode::ScannerOnly => 1,
+        ExtractionMode::TreeSitterOnly => 2,
+        ExtractionMode::TreeSitterWithFallback => 3,
+        ExtractionMode::TreeSitterWithEnrichment => 4,
+    };
+    EXTRACTION_MODE_OVERRIDE.store(value, Ordering::Relaxed);
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -324,5 +352,20 @@ mod tests {
         let span = node_span(root);
         assert_eq!(span.start, LineColumn::new(1, 1));
         assert_eq!(span.end.line, 3);
+    }
+
+    #[test]
+    fn parser_reports_size_guardrail_without_panicking() {
+        let pool = ParserPool::new(python_language());
+        let repo = aci_core::RepositoryId::new("repo", &["tree-sitter-guardrail"]);
+        let file_id = aci_core::FileId::new("file", &[repo.as_str(), "large.py", "python"]);
+        let limits = ParseLimits {
+            max_file_bytes: 4,
+            ..ParseLimits::default()
+        };
+        let skip = pool
+            .parse("def main():\n    pass\n", &file_id, limits)
+            .expect_err("large input should be skipped");
+        assert!(matches!(skip, ParseSkip::TooLarge { .. }));
     }
 }

@@ -18,6 +18,7 @@ dependencies = [
 name = "aci-cli"
 version = "0.1.0"
 dependencies = [
+ "aci-adapters",
  "aci-core",
  "aci-export",
  "aci-indexer",

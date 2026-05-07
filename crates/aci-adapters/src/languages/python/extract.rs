@@ -17,7 +17,7 @@ const IMPORTS_QUERY: &str = include_str!("queries/imports.scm");
 const CALLS_QUERY: &str = include_str!("queries/calls.scm");
 
 pub fn extract_python(file: &SourceFile) -> GraphPartition {
-    match ExtractionMode::from_env() {
+    match ExtractionMode::current() {
         ExtractionMode::ScannerOnly => scanner_extract_python(file),
         ExtractionMode::TreeSitterOnly => tree_sitter_extract_python(file, false),
         ExtractionMode::TreeSitterWithFallback | ExtractionMode::TreeSitterWithEnrichment => {
@@ -44,6 +44,7 @@ fn tree_sitter_extract_python(file: &SourceFile, fallback: bool) -> GraphPartiti
     };
 
     let language = python_language();
+    let mut query_captures = 0_u64;
     match validate_queries(
         &language,
         &[
@@ -66,20 +67,21 @@ fn tree_sitter_extract_python(file: &SourceFile, fallback: bool) -> GraphPartiti
     ) {
         Ok(queries) => {
             for query in queries {
-                if let Err(message) =
-                    count_query_captures(&query, report.tree.root_node(), &file.text, limits)
-                {
-                    let mut partition = if fallback {
-                        scanner_extract_python(file)
-                    } else {
-                        GraphPartition::empty(file)
-                    };
-                    partition.diagnostics.push(Diagnostic::warning(
-                        message,
-                        Some(file.file_id.clone()),
-                        None,
-                    ));
-                    return partition;
+                match count_query_captures(&query, report.tree.root_node(), &file.text, limits) {
+                    Ok(count) => query_captures += count as u64,
+                    Err(message) => {
+                        let mut partition = if fallback {
+                            scanner_extract_python(file)
+                        } else {
+                            GraphPartition::empty(file)
+                        };
+                        partition.diagnostics.push(Diagnostic::warning(
+                            message,
+                            Some(file.file_id.clone()),
+                            None,
+                        ));
+                        return partition;
+                    }
                 }
             }
         }
@@ -129,7 +131,10 @@ fn tree_sitter_extract_python(file: &SourceFile, fallback: bool) -> GraphPartiti
         &mut builder,
         &mut scopes,
     );
-    crate::languages::python::resolve_partition(builder.finish())
+    let mut partition = crate::languages::python::resolve_partition(builder.finish());
+    partition.metrics.parse_time_micros = report.parse_time.as_micros() as u64;
+    partition.metrics.query_captures = query_captures;
+    partition
 }
 
 fn scanner_extract_python(file: &SourceFile) -> GraphPartition {

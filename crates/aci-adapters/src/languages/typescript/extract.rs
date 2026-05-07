@@ -1,7 +1,5 @@
-use crate::helpers::{
-    PartitionBuilder, call_identifiers, first_identifier_after, line_span, quoted_module,
-    read_identifier,
-};
+use crate::helpers::{PartitionBuilder, first_identifier_after, quoted_module, read_identifier};
+use crate::languages::typescript::scanner::scanner_extract_typescript;
 use crate::tree_sitter::{
     ExtractionMode, ParseLimits, ParseSkip, ParserPool, child_by_field_name, count_query_captures,
     javascript_language, node_span, node_text, tsx_language, typescript_language, validate_queries,
@@ -22,7 +20,7 @@ const IMPORTS_QUERY: &str = include_str!("queries/imports.scm");
 const CALLS_QUERY: &str = include_str!("queries/calls.scm");
 
 pub fn extract_typescript(file: &SourceFile) -> GraphPartition {
-    match ExtractionMode::from_env() {
+    match ExtractionMode::current() {
         ExtractionMode::ScannerOnly => scanner_extract_typescript(file),
         ExtractionMode::TreeSitterOnly => tree_sitter_extract_typescript(file, false),
         ExtractionMode::TreeSitterWithFallback | ExtractionMode::TreeSitterWithEnrichment => {
@@ -57,6 +55,7 @@ fn tree_sitter_extract_typescript(file: &SourceFile, fallback: bool) -> GraphPar
         }
     };
 
+    let mut query_captures = 0_u64;
     if grammar != Grammar::JavaScript {
         let language = match grammar {
             Grammar::TypeScript => typescript_language(),
@@ -85,20 +84,22 @@ fn tree_sitter_extract_typescript(file: &SourceFile, fallback: bool) -> GraphPar
         ) {
             Ok(queries) => {
                 for query in queries {
-                    if let Err(message) =
-                        count_query_captures(&query, report.tree.root_node(), &file.text, limits)
+                    match count_query_captures(&query, report.tree.root_node(), &file.text, limits)
                     {
-                        let mut partition = if fallback {
-                            scanner_extract_typescript(file)
-                        } else {
-                            GraphPartition::empty(file)
-                        };
-                        partition.diagnostics.push(Diagnostic::warning(
-                            message,
-                            Some(file.file_id.clone()),
-                            None,
-                        ));
-                        return partition;
+                        Ok(count) => query_captures += count as u64,
+                        Err(message) => {
+                            let mut partition = if fallback {
+                                scanner_extract_typescript(file)
+                            } else {
+                                GraphPartition::empty(file)
+                            };
+                            partition.diagnostics.push(Diagnostic::warning(
+                                message,
+                                Some(file.file_id.clone()),
+                                None,
+                            ));
+                            return partition;
+                        }
                     }
                 }
             }
@@ -148,37 +149,10 @@ fn tree_sitter_extract_typescript(file: &SourceFile, fallback: bool) -> GraphPar
         &mut builder,
         &mut scopes,
     );
-    crate::languages::typescript::resolve_partition(builder.finish())
-}
-
-fn scanner_extract_typescript(file: &SourceFile) -> GraphPartition {
-    let mut builder = PartitionBuilder::new(file);
-    let mut current_scope = builder.file_node();
-
-    for (line_index, line) in file.text.lines().enumerate() {
-        let trimmed = line.trim();
-        let span = line_span(&file.text, line_index);
-
-        if trimmed.starts_with("import ") || trimmed.contains(" require(") {
-            if let Some(module) = module_specifier(trimmed) {
-                builder.add_import(module, span.clone());
-            }
-        }
-        if trimmed.starts_with("export ") {
-            let name = export_name(trimmed).unwrap_or("default");
-            builder.add_export(name, span.clone());
-        }
-        if let Some((name, kind)) = symbol_declaration(trimmed) {
-            current_scope = builder.add_symbol(name, name, kind, span.clone());
-        }
-        for call in call_identifiers(trimmed) {
-            if !is_declaration_call(trimmed, call) {
-                builder.add_call(current_scope.clone(), call, span.clone());
-            }
-        }
-    }
-
-    builder.finish()
+    let mut partition = crate::languages::typescript::resolve_partition(builder.finish());
+    partition.metrics.parse_time_micros = report.parse_time.as_micros() as u64;
+    partition.metrics.query_captures = query_captures;
+    partition
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -448,6 +422,19 @@ fn export_names(line: &str) -> Vec<String> {
         })
 }
 
+fn export_name(line: &str) -> Option<&str> {
+    first_identifier_after(line, "export default function ")
+        .or_else(|| first_identifier_after(line, "export default class "))
+        .or_else(|| first_identifier_after(line, "export function "))
+        .or_else(|| first_identifier_after(line, "export class "))
+        .or_else(|| first_identifier_after(line, "export interface "))
+        .or_else(|| first_identifier_after(line, "export type "))
+        .or_else(|| first_identifier_after(line, "export enum "))
+        .or_else(|| first_identifier_after(line, "export const "))
+        .or_else(|| first_identifier_after(line, "export let "))
+        .or_else(|| first_identifier_after(line, "export var "))
+}
+
 fn call_name(node: tree_sitter::Node<'_>, source: &str) -> Option<String> {
     match node.kind() {
         "identifier" => node_text(node, source).map(ToOwned::to_owned),
@@ -510,89 +497,6 @@ fn module_specifier(line: &str) -> Option<&str> {
         .nth(1)
         .and_then(quoted_module)
         .or_else(|| quoted_module(line))
-}
-
-fn export_name(line: &str) -> Option<&str> {
-    first_identifier_after(line, "export default function ")
-        .or_else(|| first_identifier_after(line, "export default class "))
-        .or_else(|| first_identifier_after(line, "export function "))
-        .or_else(|| first_identifier_after(line, "export class "))
-        .or_else(|| first_identifier_after(line, "export interface "))
-        .or_else(|| first_identifier_after(line, "export type "))
-        .or_else(|| first_identifier_after(line, "export enum "))
-        .or_else(|| first_identifier_after(line, "export const "))
-        .or_else(|| first_identifier_after(line, "export let "))
-        .or_else(|| first_identifier_after(line, "export var "))
-}
-
-fn symbol_declaration(line: &str) -> Option<(&str, SymbolKind)> {
-    first_identifier_after(line, "export function ")
-        .or_else(|| first_identifier_after(line, "function "))
-        .map(|name| (name, SymbolKind::Function))
-        .or_else(|| {
-            first_identifier_after(line, "export class ")
-                .or_else(|| first_identifier_after(line, "class "))
-                .map(|name| (name, SymbolKind::Class))
-        })
-        .or_else(|| {
-            first_identifier_after(line, "export interface ")
-                .or_else(|| first_identifier_after(line, "interface "))
-                .map(|name| (name, SymbolKind::Interface))
-        })
-        .or_else(|| {
-            first_identifier_after(line, "export type ")
-                .or_else(|| first_identifier_after(line, "type "))
-                .map(|name| (name, SymbolKind::TypeAlias))
-        })
-        .or_else(|| {
-            first_identifier_after(line, "export enum ")
-                .or_else(|| first_identifier_after(line, "enum "))
-                .map(|name| (name, SymbolKind::Enum))
-        })
-        .or_else(|| {
-            [
-                "export const ",
-                "const ",
-                "export let ",
-                "let ",
-                "export var ",
-                "var ",
-            ]
-            .iter()
-            .find_map(|prefix| variable_symbol(line, prefix))
-        })
-        .or_else(|| method_symbol(line))
-}
-
-fn variable_symbol<'a>(line: &'a str, prefix: &str) -> Option<(&'a str, SymbolKind)> {
-    let name = first_identifier_after(line, prefix)?;
-    if line.contains("=>") || line.contains("function") {
-        Some((name, SymbolKind::Function))
-    } else {
-        Some((name, SymbolKind::Variable))
-    }
-}
-
-fn method_symbol(line: &str) -> Option<(&str, SymbolKind)> {
-    if line.starts_with("//") || !line.contains('(') || !line.ends_with('{') {
-        return None;
-    }
-    let name = read_identifier(line)?;
-    if matches!(name, "if" | "for" | "while" | "switch" | "catch") {
-        None
-    } else {
-        Some((name, SymbolKind::Method))
-    }
-}
-
-fn is_declaration_call(line: &str, call: &str) -> bool {
-    line.starts_with("function ")
-        || line.starts_with("class ")
-        || line.starts_with("interface ")
-        || line.starts_with("export function ")
-        || line.starts_with("export class ")
-        || line.starts_with("export interface ")
-        || call == "require"
 }
 
 fn qualify(parent: &str, name: &str) -> String {

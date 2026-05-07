@@ -1,10 +1,11 @@
+use aci_adapters::tree_sitter::{ExtractionMode, set_extraction_mode};
 use aci_core::RepositoryId;
 use aci_export::{ExportFormat, export_snapshot, import_scip_enrichment};
 use aci_indexer::{IndexOptions, IndexPipeline, plan_incremental_reindex};
 use aci_query::QueryEngine;
 use aci_store::GraphStore;
 use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -84,6 +85,8 @@ enum BenchCommand {
         path: PathBuf,
         #[arg(long)]
         workers: Option<usize>,
+        #[arg(long, value_enum, default_value_t = BenchExtractionVariant::TreeSitterFallback)]
+        variant: BenchExtractionVariant,
     },
     Query {
         #[arg(long, default_value = ".aci")]
@@ -106,6 +109,25 @@ enum BenchCommand {
         #[arg(long, default_value_t = 1000)]
         iterations: usize,
     },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum BenchExtractionVariant {
+    ScannerOnly,
+    TreeSitterOnly,
+    TreeSitterFallback,
+    TreeSitterEnrichment,
+}
+
+impl BenchExtractionVariant {
+    fn mode(self) -> ExtractionMode {
+        match self {
+            Self::ScannerOnly => ExtractionMode::ScannerOnly,
+            Self::TreeSitterOnly => ExtractionMode::TreeSitterOnly,
+            Self::TreeSitterFallback => ExtractionMode::TreeSitterWithFallback,
+            Self::TreeSitterEnrichment => ExtractionMode::TreeSitterWithEnrichment,
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -227,7 +249,13 @@ fn export(args: ExportArgs) -> Result<()> {
 
 fn bench(args: BenchArgs) -> Result<()> {
     match args.command {
-        BenchCommand::Cold { path, workers } => {
+        BenchCommand::Cold {
+            path,
+            workers,
+            variant,
+        } => {
+            let mode = variant.mode();
+            set_extraction_mode(mode);
             let mut options = IndexOptions::new(&path);
             if let Some(workers) = workers {
                 options.workers = workers;
@@ -235,8 +263,37 @@ fn bench(args: BenchArgs) -> Result<()> {
             let start = Instant::now();
             let report = IndexPipeline::default().index_path(options)?;
             let elapsed = start.elapsed().as_secs_f64();
+            let files = report.partitions.len().max(1);
+            let parse_micros = report
+                .partitions
+                .iter()
+                .map(|partition| partition.metrics.parse_time_micros)
+                .sum::<u64>();
+            let extraction_micros = report
+                .partitions
+                .iter()
+                .map(|partition| partition.metrics.extraction_time_micros)
+                .sum::<u64>();
+            let query_captures = report
+                .partitions
+                .iter()
+                .map(|partition| partition.metrics.query_captures)
+                .sum::<u64>();
+            println!("cold_index_variant={}", mode.as_str());
             println!("cold_index_files={}", report.partitions.len());
             println!("cold_index_seconds={elapsed:.6}");
+            println!(
+                "cold_parse_seconds_per_file={:.9}",
+                parse_micros as f64 / 1_000_000.0 / files as f64
+            );
+            println!(
+                "cold_extraction_seconds_per_file={:.9}",
+                extraction_micros as f64 / 1_000_000.0 / files as f64
+            );
+            println!(
+                "cold_query_captures_per_file={:.3}",
+                query_captures as f64 / files as f64
+            );
         }
         BenchCommand::Query {
             store,

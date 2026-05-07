@@ -1,6 +1,7 @@
 mod detect;
 mod extract;
 mod resolve;
+mod scanner;
 
 pub use detect::{detect_javascript, detect_typescript};
 pub use extract::extract_typescript;

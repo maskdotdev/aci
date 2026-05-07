@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 #[derive(Clone, Debug)]
 pub struct IndexOptions {
@@ -145,7 +146,10 @@ impl IndexPipeline {
             FileSkip::Diagnostic(Diagnostic::warning(error.to_string(), None, None))
         })?;
         let source = SourceFile::new(repo_id.clone(), root, path.to_path_buf(), language, text);
-        Ok(Some(self.registry.extract(&source)))
+        let started = Instant::now();
+        let mut partition = self.registry.extract(&source);
+        partition.metrics.extraction_time_micros = started.elapsed().as_micros() as u64;
+        Ok(Some(partition))
     }
 }
 
@@ -247,7 +251,7 @@ fn partition_depends_on_changed_stem(
         .nodes
         .iter()
         .filter(|node| node.kind == NodeKind::Import)
-        .filter_map(|node| node.name.as_deref())
+        .filter_map(|node| node.qualified_name.as_deref().or(node.name.as_deref()))
         .filter_map(module_stem)
         .any(|stem| changed_stems.contains(stem))
 }
