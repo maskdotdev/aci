@@ -1,7 +1,7 @@
 use aci_core::{Diagnostic, FileId, LineColumn, SourceSpan};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tree_sitter::{
     Language as TreeSitterLanguage, Node, Parser, Query, QueryCursor, StreamingIterator, Tree,
@@ -12,6 +12,7 @@ pub const DEFAULT_MAX_QUERY_CAPTURES: usize = 100_000;
 pub const DEFAULT_PARSE_TIMEOUT: Duration = Duration::from_millis(250);
 pub const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_millis(250);
 static EXTRACTION_MODE_OVERRIDE: AtomicU8 = AtomicU8::new(0);
+static ENV_EXTRACTION_MODE: OnceLock<ExtractionMode> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExtractionMode {
@@ -30,6 +31,10 @@ impl ExtractionMode {
             4 => return Self::TreeSitterWithEnrichment,
             _ => {}
         }
+        *ENV_EXTRACTION_MODE.get_or_init(Self::from_env)
+    }
+
+    fn from_env() -> Self {
         match std::env::var("ACI_EXTRACTION_MODE").as_deref() {
             Ok("scanner-only") => Self::ScannerOnly,
             Ok("tree-sitter-only") => Self::TreeSitterOnly,
