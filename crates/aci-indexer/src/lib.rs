@@ -132,6 +132,9 @@ impl IndexPipeline {
         if is_vendor_or_generated(path) {
             return Err(FileSkip::Skipped(path.to_path_buf()));
         }
+        if !self.registry.path_candidate(path) {
+            return Ok(None);
+        }
         let bytes = fs::read(path).map_err(|error| {
             FileSkip::Diagnostic(Diagnostic::warning(error.to_string(), None, None))
         })?;

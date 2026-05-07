@@ -7,6 +7,9 @@ pub mod tree_sitter;
 
 pub trait LanguageAdapter: Send + Sync {
     fn language(&self) -> Language;
+    fn path_candidate(&self, _path: &Path) -> bool {
+        true
+    }
     fn detect(&self, path: &Path, bytes: &[u8]) -> bool;
     fn extract(&self, file: &SourceFile) -> GraphPartition;
 }
@@ -41,6 +44,12 @@ impl AdapterRegistry {
             .find(|adapter| adapter.detect(path, bytes))
             .map(|adapter| adapter.language())
             .unwrap_or(Language::Unknown)
+    }
+
+    pub fn path_candidate(&self, path: &Path) -> bool {
+        self.adapters
+            .iter()
+            .any(|adapter| adapter.path_candidate(path))
     }
 
     pub fn extract(&self, file: &SourceFile) -> GraphPartition {
@@ -81,6 +90,18 @@ mod tests {
             registry.detect_language(Path::new("package.json"), br#"{ "name": "app" }"#),
             Language::Json
         );
+    }
+
+    #[test]
+    fn registry_prefilters_obvious_unsupported_paths() {
+        let registry = default_registry();
+        assert!(registry.path_candidate(Path::new("src/app.ts")));
+        assert!(registry.path_candidate(Path::new("tools/build.py")));
+        assert!(registry.path_candidate(Path::new("crates/app/src/lib.rs")));
+        assert!(registry.path_candidate(Path::new("package.json")));
+        assert!(registry.path_candidate(Path::new("scripts/run")));
+        assert!(!registry.path_candidate(Path::new("src/app.cc")));
+        assert!(!registry.path_candidate(Path::new("assets/logo.png")));
     }
 
     #[test]

@@ -17,6 +17,10 @@ impl LanguageAdapter for PythonAdapter {
         Language::Python
     }
 
+    fn path_candidate(&self, path: &Path) -> bool {
+        detect::path_might_be_python(path)
+    }
+
     fn detect(&self, path: &Path, bytes: &[u8]) -> bool {
         detect::detect_python(path, bytes)
     }

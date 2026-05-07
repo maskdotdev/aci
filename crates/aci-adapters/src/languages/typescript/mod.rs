@@ -19,6 +19,10 @@ impl LanguageAdapter for TypeScriptAdapter {
         Language::TypeScript
     }
 
+    fn path_candidate(&self, path: &Path) -> bool {
+        detect::path_might_be_typescript(path)
+    }
+
     fn detect(&self, path: &Path, bytes: &[u8]) -> bool {
         detect::detect_typescript(path, bytes)
     }
@@ -31,6 +35,10 @@ impl LanguageAdapter for TypeScriptAdapter {
 impl LanguageAdapter for JavaScriptAdapter {
     fn language(&self) -> Language {
         Language::JavaScript
+    }
+
+    fn path_candidate(&self, path: &Path) -> bool {
+        detect::path_might_be_javascript(path)
     }
 
     fn detect(&self, path: &Path, bytes: &[u8]) -> bool {

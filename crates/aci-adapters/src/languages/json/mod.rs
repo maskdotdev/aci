@@ -15,6 +15,10 @@ impl LanguageAdapter for JsonAdapter {
         Language::Json
     }
 
+    fn path_candidate(&self, path: &Path) -> bool {
+        detect::path_might_be_json(path)
+    }
+
     fn detect(&self, path: &Path, bytes: &[u8]) -> bool {
         detect::detect_json(path, bytes)
     }
