@@ -156,3 +156,18 @@ issues, or design files as the project grows.
 - [x] Single-file semantic refresh under 1 second where supported.
 - [x] Warm graph queries under 10 ms for common lookups.
 - [x] Keep memory under 1-2 GB for large monorepos.
+
+## Phase 13: Tree-sitter Production Readiness
+
+- [ ] Add grammar dependencies for Python, JavaScript, TypeScript, TSX, and JSX.
+- [ ] Build a shared parser pool and capture extraction runtime.
+- [ ] Compile and validate every language query file in tests.
+- [ ] Replace Python scanner-first extraction with Tree-sitter-first extraction.
+- [ ] Add production-grade Python fixtures and golden graph tests.
+- [ ] Replace JavaScript/TypeScript scanner-first extraction with Tree-sitter-first extraction.
+- [ ] Add production-grade JavaScript/TypeScript/TSX fixtures and golden graph tests.
+- [ ] Preserve scanner fallback with lower provenance and confidence.
+- [ ] Add graph fidelity invariants for definitions, imports, exports, calls, and references.
+- [ ] Add scanner-vs-Tree-sitter-vs-enrichment benchmark variants.
+- [ ] Keep Tree-sitter structural indexing inside existing performance budgets.
+- [ ] Add semantic merge tests proving SCIP/LSP facts win cross-file resolution conflicts.
