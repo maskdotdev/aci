@@ -23,6 +23,7 @@ impl AdapterRegistry {
 
     pub fn with_defaults() -> Self {
         Self::new()
+            .register(languages::typescript::JavaScriptAdapter)
             .register(languages::typescript::TypeScriptAdapter)
             .register(languages::python::PythonAdapter)
     }
@@ -154,5 +155,58 @@ mod tests {
         );
         let partition = registry.extract(&file);
         assert!(partition.nodes.len() >= 400);
+    }
+
+    #[test]
+    fn tree_sitter_queries_compile_for_supported_grammars() {
+        let python = tree_sitter::python_language();
+        tree_sitter::validate_queries(
+            &python,
+            &[
+                tree_sitter::QuerySource::new(
+                    "symbols.scm",
+                    "languages/python/queries/symbols.scm",
+                    include_str!("languages/python/queries/symbols.scm"),
+                ),
+                tree_sitter::QuerySource::new(
+                    "imports.scm",
+                    "languages/python/queries/imports.scm",
+                    include_str!("languages/python/queries/imports.scm"),
+                ),
+                tree_sitter::QuerySource::new(
+                    "calls.scm",
+                    "languages/python/queries/calls.scm",
+                    include_str!("languages/python/queries/calls.scm"),
+                ),
+            ],
+        )
+        .expect("python queries compile");
+
+        for language in [
+            tree_sitter::typescript_language(),
+            tree_sitter::tsx_language(),
+        ] {
+            tree_sitter::validate_queries(
+                &language,
+                &[
+                    tree_sitter::QuerySource::new(
+                        "symbols.scm",
+                        "languages/typescript/queries/symbols.scm",
+                        include_str!("languages/typescript/queries/symbols.scm"),
+                    ),
+                    tree_sitter::QuerySource::new(
+                        "imports.scm",
+                        "languages/typescript/queries/imports.scm",
+                        include_str!("languages/typescript/queries/imports.scm"),
+                    ),
+                    tree_sitter::QuerySource::new(
+                        "calls.scm",
+                        "languages/typescript/queries/calls.scm",
+                        include_str!("languages/typescript/queries/calls.scm"),
+                    ),
+                ],
+            )
+            .expect("typescript queries compile");
+        }
     }
 }

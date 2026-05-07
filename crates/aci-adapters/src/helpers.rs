@@ -1,16 +1,26 @@
 use aci_core::{
-    EdgeKind, GraphEdge, GraphNode, GraphPartition, Language, LineColumn, NodeId, NodeKind,
-    SourceFile, SourceSpan, SymbolKind,
+    Confidence, Diagnostic, EdgeKind, FactProvenance, GraphEdge, GraphNode, GraphPartition,
+    Language, LineColumn, NodeId, NodeKind, SourceFile, SourceSpan, SymbolKind,
 };
 
 pub struct PartitionBuilder<'a> {
     file: &'a SourceFile,
     partition: GraphPartition,
     file_node: NodeId,
+    provenance: FactProvenance,
+    confidence: Confidence,
 }
 
 impl<'a> PartitionBuilder<'a> {
     pub fn new(file: &'a SourceFile) -> Self {
+        Self::new_with_quality(file, FactProvenance::StructuralScanner, Confidence::Medium)
+    }
+
+    pub fn new_with_quality(
+        file: &'a SourceFile,
+        provenance: FactProvenance,
+        confidence: Confidence,
+    ) -> Self {
         let mut partition = GraphPartition::empty(file);
         let file_name = file
             .path
@@ -24,13 +34,16 @@ impl<'a> PartitionBuilder<'a> {
             file_name,
             Some(file.path.to_string_lossy().replace('\\', "/")),
             None,
-        );
+        )
+        .with_fact_quality(provenance, confidence);
         let file_node_id = file_node.id.clone();
         partition.nodes.push(file_node);
         Self {
             file,
             partition,
             file_node: file_node_id,
+            provenance,
+            confidence,
         }
     }
 
@@ -54,7 +67,8 @@ impl<'a> PartitionBuilder<'a> {
             Some(qualified_name.to_string()),
             Some(span.clone()),
         )
-        .with_symbol_kind(kind);
+        .with_symbol_kind(kind)
+        .with_fact_quality(self.provenance, self.confidence);
         let id = node.id.clone();
         self.partition.nodes.push(node);
         self.add_edge(
@@ -67,15 +81,20 @@ impl<'a> PartitionBuilder<'a> {
     }
 
     pub fn add_import(&mut self, specifier: &str, span: SourceSpan) -> NodeId {
+        self.add_import_alias(specifier, specifier, span)
+    }
+
+    pub fn add_import_alias(&mut self, specifier: &str, alias: &str, span: SourceSpan) -> NodeId {
         let import_node = GraphNode::deterministic(
             &self.file.repo_id,
             Some(&self.file.file_id),
             NodeKind::Import,
             self.file.language,
-            Some(specifier.to_string()),
+            Some(alias.to_string()),
             Some(specifier.to_string()),
             Some(span.clone()),
-        );
+        )
+        .with_fact_quality(self.provenance, self.confidence);
         let import_id = import_node.id.clone();
         self.partition.nodes.push(import_node);
         let package_id = self.add_external(NodeKind::Package, specifier, None);
@@ -98,7 +117,8 @@ impl<'a> PartitionBuilder<'a> {
             Some(name.to_string()),
             Some(name.to_string()),
             Some(span.clone()),
-        );
+        )
+        .with_fact_quality(self.provenance, self.confidence);
         let export_id = export_node.id.clone();
         self.partition.nodes.push(export_node);
         self.add_edge(
@@ -122,6 +142,14 @@ impl<'a> PartitionBuilder<'a> {
         self.add_edge(EdgeKind::References, from, target_id, Some(span));
     }
 
+    pub fn add_diagnostic(&mut self, diagnostic: Diagnostic) {
+        self.partition.diagnostics.push(diagnostic);
+    }
+
+    pub fn add_diagnostics(&mut self, diagnostics: impl IntoIterator<Item = Diagnostic>) {
+        self.partition.diagnostics.extend(diagnostics);
+    }
+
     pub fn finish(self) -> GraphPartition {
         self.partition
     }
@@ -140,7 +168,8 @@ impl<'a> PartitionBuilder<'a> {
             Some(name.to_string()),
             Some(name.to_string()),
             None,
-        );
+        )
+        .with_fact_quality(self.provenance, self.confidence);
         node.symbol_kind = symbol_kind;
         let id = node.id.clone();
         if !self
@@ -155,7 +184,8 @@ impl<'a> PartitionBuilder<'a> {
     }
 
     fn add_edge(&mut self, kind: EdgeKind, from: NodeId, to: NodeId, span: Option<SourceSpan>) {
-        let edge = GraphEdge::deterministic(kind, &from, &to, span);
+        let edge = GraphEdge::deterministic(kind, &from, &to, span)
+            .with_fact_quality(self.provenance, self.confidence);
         if !self
             .partition
             .edges

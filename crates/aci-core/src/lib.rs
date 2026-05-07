@@ -124,6 +124,8 @@ pub enum SymbolKind {
     Method,
     Class,
     Interface,
+    TypeAlias,
+    Enum,
     Variable,
     Module,
     Field,
