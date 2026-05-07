@@ -1,11 +1,14 @@
-use aci_export::{ExportFormat, export_snapshot};
+use aci_core::RepositoryId;
+use aci_export::{ExportFormat, export_snapshot, import_scip_enrichment};
 use aci_indexer::{IndexOptions, IndexPipeline, plan_incremental_reindex};
 use aci_query::QueryEngine;
 use aci_store::GraphStore;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use std::fs;
+use std::io::Cursor;
 use std::path::PathBuf;
+use std::time::Instant;
 
 #[derive(Parser)]
 #[command(name = "aci", about = "Index and query code graphs")]
@@ -19,6 +22,7 @@ enum Command {
     Index(IndexArgs),
     Query(QueryArgs),
     Export(ExportArgs),
+    Bench(BenchArgs),
 }
 
 #[derive(Args)]
@@ -68,12 +72,35 @@ struct ExportArgs {
     output: Option<PathBuf>,
 }
 
+#[derive(Args)]
+struct BenchArgs {
+    #[command(subcommand)]
+    command: BenchCommand,
+}
+
+#[derive(Subcommand)]
+enum BenchCommand {
+    Query {
+        #[arg(long, default_value = ".aci")]
+        store: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value_t = 1000)]
+        iterations: usize,
+    },
+    Semantic {
+        #[arg(long, default_value_t = 1000)]
+        iterations: usize,
+    },
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Index(args) => index(args),
         Command::Query(args) => query(args),
         Command::Export(args) => export(args),
+        Command::Bench(args) => bench(args),
     }
 }
 
@@ -84,6 +111,7 @@ fn index(args: IndexArgs) -> Result<()> {
     }
     let pipeline = IndexPipeline::default();
     let store = GraphStore::open(args.store)?;
+    let mut should_compact = true;
     if args.changed.is_empty() {
         let report = pipeline
             .index_path(options)
@@ -96,6 +124,7 @@ fn index(args: IndexArgs) -> Result<()> {
             report.diagnostics.len()
         );
     } else {
+        should_compact = false;
         let root = fs::canonicalize(&args.path)
             .with_context(|| format!("canonicalizing {}", args.path.display()))?;
         let changed = args
@@ -115,7 +144,9 @@ fn index(args: IndexArgs) -> Result<()> {
             plan.reverse_dependencies.len()
         );
     }
-    store.compact()?;
+    if should_compact {
+        store.compact()?;
+    }
     let integrity = store.integrity_check()?;
     for problem in integrity {
         eprintln!("integrity: {problem}");
@@ -176,6 +207,60 @@ fn export(args: ExportArgs) -> Result<()> {
         let stdout = std::io::stdout();
         let handle = stdout.lock();
         export_snapshot(&snapshot, args.format, handle)?;
+    }
+    Ok(())
+}
+
+fn bench(args: BenchArgs) -> Result<()> {
+    match args.command {
+        BenchCommand::Query {
+            store,
+            name,
+            iterations,
+        } => {
+            let store = GraphStore::open(store)?;
+            let engine = QueryEngine::new(store.load_latest()?);
+            let iterations = iterations.max(1);
+            let start = Instant::now();
+            let mut hits = 0_usize;
+            for _ in 0..iterations {
+                hits += engine.lookup_symbols(Some(&name), None, None, None).len();
+            }
+            let elapsed = start.elapsed().as_secs_f64();
+            println!("query_iterations={iterations}");
+            println!("query_hits={hits}");
+            println!("query_average_seconds={:.9}", elapsed / iterations as f64);
+        }
+        BenchCommand::Semantic { iterations } => {
+            let iterations = iterations.max(1);
+            let input = br#"{
+              "documents": [{
+                "relativePath": "src/main.py",
+                "occurrences": [
+                  { "symbol": "local 0 main().", "range": [0, 4, 8], "roles": 1 },
+                  { "symbol": "local 0 helper().", "range": [1, 2, 8], "roles": 0 }
+                ]
+              }]
+            }"#;
+            let repo = RepositoryId::new("repo", &["semantic-bench"]);
+            let start = Instant::now();
+            let mut partitions = 0_usize;
+            for _ in 0..iterations {
+                let snapshot = import_scip_enrichment(
+                    repo.clone(),
+                    std::path::Path::new("/repo"),
+                    Cursor::new(input),
+                )?;
+                partitions += snapshot.partitions.len();
+            }
+            let elapsed = start.elapsed().as_secs_f64();
+            println!("semantic_iterations={iterations}");
+            println!("semantic_partitions={partitions}");
+            println!(
+                "semantic_refresh_seconds={:.9}",
+                elapsed / iterations as f64
+            );
+        }
     }
     Ok(())
 }

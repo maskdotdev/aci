@@ -1,6 +1,6 @@
 use aci_core::{EdgeKind, GraphEdge, GraphPartition, GraphSnapshot, NodeId, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -38,8 +38,8 @@ pub enum DeltaRecord {
 
 #[derive(Clone, Debug, Default)]
 pub struct AdjacencyIndex {
-    pub outgoing: BTreeMap<NodeId, Vec<GraphEdge>>,
-    pub incoming: BTreeMap<NodeId, Vec<GraphEdge>>,
+    pub outgoing: HashMap<NodeId, Vec<GraphEdge>>,
+    pub incoming: HashMap<NodeId, Vec<GraphEdge>>,
 }
 
 pub struct GraphStore {
@@ -58,9 +58,7 @@ impl GraphStore {
     }
 
     pub fn write_partition(&self, partition: &GraphPartition) -> Result<()> {
-        let relative = partition_filename(partition.file_id.as_str());
-        let path = self.root.join("partitions").join(&relative);
-        write_json_atomic(&path, partition)?;
+        let relative = self.write_partition_file(partition)?;
         self.append_delta(&DeltaRecord::ReplacePartition {
             partition: partition.clone(),
         })?;
@@ -79,10 +77,31 @@ impl GraphStore {
     }
 
     pub fn replace_partitions(&self, partitions: &[GraphPartition]) -> Result<()> {
+        let mut manifest = self.read_manifest().unwrap_or_default();
+        let mut delta = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.root.join("delta.jsonl"))?;
         for partition in partitions {
-            self.write_partition(partition)?;
+            let relative = self.write_partition_file(partition)?;
+            serde_json::to_writer(
+                &mut delta,
+                &DeltaRecord::ReplacePartition {
+                    partition: partition.clone(),
+                },
+            )?;
+            writeln!(delta)?;
+            manifest.partitions.insert(
+                partition.file_id.to_string(),
+                PartitionEntry {
+                    file_id: partition.file_id.to_string(),
+                    path: partition.path.clone(),
+                    fingerprint: partition.fingerprint.clone(),
+                    partition_file: PathBuf::from("partitions").join(relative),
+                },
+            );
         }
-        Ok(())
+        self.write_manifest(&manifest)
     }
 
     pub fn compact(&self) -> Result<GraphSnapshot> {
@@ -126,6 +145,13 @@ impl GraphStore {
 
     fn write_manifest(&self, manifest: &Manifest) -> Result<()> {
         write_json_atomic(&self.root.join("manifest.json"), manifest)
+    }
+
+    fn write_partition_file(&self, partition: &GraphPartition) -> Result<PathBuf> {
+        let relative = partition_filename(partition.file_id.as_str());
+        let path = self.root.join("partitions").join(&relative);
+        write_json_atomic(&path, partition)?;
+        Ok(relative)
     }
 
     fn append_delta(&self, record: &DeltaRecord) -> Result<()> {

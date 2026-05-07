@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
@@ -354,11 +355,8 @@ impl SourceFile {
         language: Language,
         text: String,
     ) -> Self {
-        let relative = path
-            .strip_prefix(repo_root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/");
+        let relative = path.strip_prefix(repo_root).unwrap_or(&path).to_path_buf();
+        let relative = normalize_path(&relative);
         let fingerprint = blake3::hash(text.as_bytes()).to_hex().to_string();
         let file_id = FileId::new("file", &[repo_id.as_str(), &relative, language.as_str()]);
         Self {
@@ -427,6 +425,59 @@ pub enum AciError {
 }
 
 pub type Result<T> = std::result::Result<T, AciError>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub struct InternedString(u32);
+
+impl InternedString {
+    pub fn index(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct StringInterner {
+    values: Vec<String>,
+    indexes: BTreeMap<String, InternedString>,
+}
+
+impl StringInterner {
+    pub fn intern(&mut self, value: impl AsRef<str>) -> InternedString {
+        let value = value.as_ref();
+        if let Some(existing) = self.indexes.get(value) {
+            return *existing;
+        }
+        let index = InternedString(self.values.len() as u32);
+        self.values.push(value.to_string());
+        self.indexes.insert(value.to_string(), index);
+        index
+    }
+
+    pub fn resolve(&self, value: InternedString) -> Option<&str> {
+        self.values.get(value.0 as usize).map(String::as_str)
+    }
+
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+}
+
+pub fn normalize_path(path: &Path) -> String {
+    path.components()
+        .filter_map(|component| {
+            let part = component.as_os_str().to_string_lossy();
+            match part.as_ref() {
+                "" | "." => None,
+                _ => Some(part.into_owned()),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
 
 impl Default for FactProvenance {
     fn default() -> Self {
@@ -550,5 +601,20 @@ mod tests {
             (FactProvenance::Compiler, Confidence::High),
             (FactProvenance::Lsp, Confidence::Exact)
         ));
+    }
+
+    #[test]
+    fn string_interner_reuses_existing_values() {
+        let mut interner = StringInterner::default();
+        let left = interner.intern("src/main.rs");
+        let right = interner.intern("src/main.rs");
+        assert_eq!(left, right);
+        assert_eq!(interner.len(), 1);
+        assert_eq!(interner.resolve(left), Some("src/main.rs"));
+    }
+
+    #[test]
+    fn path_normalization_uses_forward_slashes() {
+        assert_eq!(normalize_path(Path::new("./src/lib.rs")), "src/lib.rs");
     }
 }

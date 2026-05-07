@@ -135,8 +135,8 @@ issues, or design files as the project grows.
 - [x] Add query-latency benchmark.
 - [x] Add memory usage reporting.
 - [x] Add large-repo benchmark script.
-- [ ] Optimize string interning and path normalization.
-- [ ] Optimize adjacency layout and traversal hot paths.
+- [x] Optimize string interning and path normalization.
+- [x] Optimize adjacency layout and traversal hot paths.
 - [x] Validate target performance budgets.
 
 ## Phase 12: Documentation And Release Readiness

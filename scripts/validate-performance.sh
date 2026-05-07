@@ -17,16 +17,15 @@ incremental_seconds="$(printf '%s\n' "$incremental_output" | awk -F= '/increment
 query_seconds="$(printf '%s\n' "$query_output" | awk -F= '/query_average_seconds/ { print $2 }')"
 rss_kb="$(printf '%s\n' "$memory_output" | awk -F= '/memory_rss_kb/ { print $2 }')"
 
-semantic_start="$(perl -MTime::HiRes=time -e 'printf "%.9f\n", time')"
-cargo test -p aci-export imports_scip_definition_and_reference_occurrences >/dev/null
-semantic_end="$(perl -MTime::HiRes=time -e 'printf "%.9f\n", time')"
-semantic_seconds="$(awk -v start="$semantic_start" -v end="$semantic_end" 'BEGIN { printf "%.6f", end - start }')"
+cargo build --release -p aci-cli --bin aci >/dev/null
+semantic_output="$(target/release/aci bench semantic --iterations "${ACI_BENCH_SEMANTIC_ITERATIONS:-1000}")"
+semantic_seconds="$(printf '%s\n' "$semantic_output" | awk -F= '/semantic_refresh_seconds/ { print $2 }')"
 
 echo "$cold_output"
 echo "$incremental_output"
 echo "$query_output"
 echo "$memory_output"
-echo "semantic_refresh_seconds=$semantic_seconds"
+echo "$semantic_output"
 
 awk -v value="$cold_seconds" -v budget="$cold_budget" 'BEGIN { exit !(value <= budget) }'
 awk -v value="$incremental_seconds" -v budget="$incremental_budget" 'BEGIN { exit !(value <= budget) }'

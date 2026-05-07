@@ -15,6 +15,7 @@ dependencies = [
 name = "aci-cli"
 version = "0.1.0"
 dependencies = [
+ "aci-core",
  "aci-export",
  "aci-indexer",
  "aci-query",

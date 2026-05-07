@@ -16,15 +16,9 @@ for i in $(seq 1 "$files"); do
 done
 
 "$aci_bin" index "$repo" --store "$store" >/dev/null
-start="$(perl -MTime::HiRes=time -e 'printf "%.9f\n", time')"
-for _ in $(seq 1 "$queries"); do
-  "$aci_bin" query --store "$store" symbols --name f_1 >/dev/null
-done
-end="$(perl -MTime::HiRes=time -e 'printf "%.9f\n", time')"
-total="$(awk -v start="$start" -v end="$end" 'BEGIN { printf "%.6f", end - start }')"
-average="$(awk -v total="$total" -v queries="$queries" 'BEGIN { printf "%.6f", total / queries }')"
+bench_output="$("$aci_bin" bench query --store "$store" --name f_1 --iterations "$queries")"
+average="$(printf '%s\n' "$bench_output" | awk -F= '/query_average_seconds/ { print $2 }')"
 
 echo "query_files=$files"
 echo "query_count=$queries"
-echo "query_total_seconds=$total"
 echo "query_average_seconds=$average"
