@@ -107,26 +107,34 @@ impl GraphStore {
     pub fn compact(&self) -> Result<GraphSnapshot> {
         let snapshot = self.load_latest()?;
         write_json_atomic(&self.root.join("snapshot.json"), &snapshot)?;
+        fs::File::create(self.root.join("delta.jsonl"))?;
         Ok(snapshot)
     }
 
     pub fn load_latest(&self) -> Result<GraphSnapshot> {
-        let mut snapshot = if self.root.join("snapshot.json").exists() {
+        let snapshot = if self.root.join("snapshot.json").exists() {
             read_json(&self.root.join("snapshot.json"))?
         } else {
             GraphSnapshot::default()
         };
+        let mut partitions = snapshot
+            .partitions
+            .into_iter()
+            .map(|partition| (partition.file_id.to_string(), partition))
+            .collect::<BTreeMap<_, _>>();
         for record in self.read_delta_log()? {
             match record {
                 DeltaRecord::ReplacePartition { partition } => {
-                    snapshot.replace_partition(partition)
+                    partitions.insert(partition.file_id.to_string(), partition);
                 }
             }
         }
-        if snapshot.partitions.is_empty() {
-            snapshot = self.load_partitions_from_manifest()?;
+        if partitions.is_empty() {
+            return self.load_partitions_from_manifest();
         }
-        Ok(snapshot)
+        Ok(GraphSnapshot {
+            partitions: partitions.into_values().collect(),
+        })
     }
 
     pub fn read_manifest(&self) -> Result<Manifest> {
@@ -247,7 +255,7 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let tmp = path.with_extension("tmp");
     {
         let mut file = fs::File::create(&tmp)?;
-        serde_json::to_writer_pretty(&mut file, value)?;
+        serde_json::to_writer(&mut file, value)?;
         writeln!(file)?;
         file.sync_all()?;
     }

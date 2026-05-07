@@ -80,6 +80,11 @@ struct BenchArgs {
 
 #[derive(Subcommand)]
 enum BenchCommand {
+    Cold {
+        path: PathBuf,
+        #[arg(long)]
+        workers: Option<usize>,
+    },
     Query {
         #[arg(long, default_value = ".aci")]
         store: PathBuf,
@@ -87,6 +92,15 @@ enum BenchCommand {
         name: String,
         #[arg(long, default_value_t = 1000)]
         iterations: usize,
+    },
+    QueryPath {
+        path: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value_t = 1000)]
+        iterations: usize,
+        #[arg(long)]
+        workers: Option<usize>,
     },
     Semantic {
         #[arg(long, default_value_t = 1000)]
@@ -213,6 +227,17 @@ fn export(args: ExportArgs) -> Result<()> {
 
 fn bench(args: BenchArgs) -> Result<()> {
     match args.command {
+        BenchCommand::Cold { path, workers } => {
+            let mut options = IndexOptions::new(&path);
+            if let Some(workers) = workers {
+                options.workers = workers;
+            }
+            let start = Instant::now();
+            let report = IndexPipeline::default().index_path(options)?;
+            let elapsed = start.elapsed().as_secs_f64();
+            println!("cold_index_files={}", report.partitions.len());
+            println!("cold_index_seconds={elapsed:.6}");
+        }
         BenchCommand::Query {
             store,
             name,
@@ -227,6 +252,32 @@ fn bench(args: BenchArgs) -> Result<()> {
                 hits += engine.lookup_symbols(Some(&name), None, None, None).len();
             }
             let elapsed = start.elapsed().as_secs_f64();
+            println!("query_iterations={iterations}");
+            println!("query_hits={hits}");
+            println!("query_average_seconds={:.9}", elapsed / iterations as f64);
+        }
+        BenchCommand::QueryPath {
+            path,
+            name,
+            iterations,
+            workers,
+        } => {
+            let mut options = IndexOptions::new(&path);
+            if let Some(workers) = workers {
+                options.workers = workers;
+            }
+            let report = IndexPipeline::default().index_path(options)?;
+            let engine = QueryEngine::new(aci_core::GraphSnapshot {
+                partitions: report.partitions,
+            });
+            let iterations = iterations.max(1);
+            let start = Instant::now();
+            let mut hits = 0_usize;
+            for _ in 0..iterations {
+                hits += engine.lookup_symbols(Some(&name), None, None, None).len();
+            }
+            let elapsed = start.elapsed().as_secs_f64();
+            println!("query_files={}", engine.symbols().len());
             println!("query_iterations={iterations}");
             println!("query_hits={hits}");
             println!("query_average_seconds={:.9}", elapsed / iterations as f64);

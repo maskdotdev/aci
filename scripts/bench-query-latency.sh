@@ -15,8 +15,7 @@ for i in $(seq 1 "$files"); do
   printf 'def f_%s():\n    return %s\n' "$i" "$i" > "$repo/src/file_$i.py"
 done
 
-"$aci_bin" index "$repo" --store "$store" >/dev/null
-bench_output="$("$aci_bin" bench query --store "$store" --name f_1 --iterations "$queries")"
+bench_output="$("$aci_bin" bench query-path "$repo" --name f_1 --iterations "$queries")"
 average="$(printf '%s\n' "$bench_output" | awk -F= '/query_average_seconds/ { print $2 }')"
 
 echo "query_files=$files"

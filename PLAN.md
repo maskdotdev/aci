@@ -151,8 +151,8 @@ issues, or design files as the project grows.
 
 ## Target Performance Budgets
 
-- [ ] Cold index 100k files in under 60 seconds on a modern laptop.
-- [ ] Single-file structural update under 250 ms.
-- [ ] Single-file semantic refresh under 1 second where supported.
-- [ ] Warm graph queries under 10 ms for common lookups.
-- [ ] Keep memory under 1-2 GB for large monorepos.
+- [x] Cold index 100k files in under 60 seconds on a modern laptop.
+- [x] Single-file structural update under 250 ms.
+- [x] Single-file semantic refresh under 1 second where supported.
+- [x] Warm graph queries under 10 ms for common lookups.
+- [x] Keep memory under 1-2 GB for large monorepos.
