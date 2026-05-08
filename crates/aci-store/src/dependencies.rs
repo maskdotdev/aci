@@ -1,3 +1,4 @@
+use crate::shard_cache::ShardWriterCache;
 use aci_core::{GraphNode, GraphPartition, NodeKind, Result};
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
@@ -8,12 +9,8 @@ pub(crate) struct DependencyIndexWriter {
     tmp_root: PathBuf,
     final_root: PathBuf,
     path_writer: BufWriter<fs::File>,
+    shards: ShardWriterCache,
     paths: HashMap<PathBuf, u32>,
-    shards: HashMap<u8, DependencyShardWriter>,
-}
-
-struct DependencyShardWriter {
-    writer: BufWriter<fs::File>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,11 +30,11 @@ impl DependencyIndexWriter {
         fs::create_dir_all(&tmp_root)?;
         let path_writer = BufWriter::new(fs::File::create(tmp_root.join("paths.tsv"))?);
         Ok(Self {
+            shards: ShardWriterCache::new(tmp_root.clone(), "tsv"),
             tmp_root,
             final_root,
             path_writer,
             paths: HashMap::new(),
-            shards: HashMap::new(),
         })
     }
 
@@ -50,22 +47,20 @@ impl DependencyIndexWriter {
         import_stems.dedup();
         let path_index = self.intern_path(&partition.path)?;
         for stem in import_stems {
-            let writer = self.open_shard(shard_for_stem(&stem))?;
-            writer.writer.write_all(stem.as_bytes())?;
-            writer.writer.write_all(b"\t")?;
-            write!(writer.writer, "{path_index}")?;
-            writeln!(writer.writer)?;
+            let mut line = Vec::new();
+            line.write_all(stem.as_bytes())?;
+            line.write_all(b"\t")?;
+            write!(line, "{path_index}")?;
+            line.write_all(b"\n")?;
+            self.shards.write_all(shard_for_stem(&stem), &line)?;
         }
         Ok(())
     }
 
     pub(crate) fn finish(mut self) -> Result<()> {
         self.path_writer.flush()?;
+        self.shards.flush()?;
         drop(self.path_writer);
-        for shard in self.shards.into_values() {
-            let mut writer = shard.writer;
-            writer.flush()?;
-        }
         if self.final_root.exists() {
             fs::remove_dir_all(&self.final_root)?;
         }
@@ -83,19 +78,6 @@ impl DependencyIndexWriter {
         writeln!(self.path_writer, "{}", path.display())?;
         self.paths.insert(path.to_path_buf(), index);
         Ok(index)
-    }
-
-    fn open_shard(&mut self, shard: u8) -> Result<&mut DependencyShardWriter> {
-        if !self.shards.contains_key(&shard) {
-            let path = self.tmp_root.join(shard_filename(shard));
-            self.shards.insert(
-                shard,
-                DependencyShardWriter {
-                    writer: BufWriter::new(fs::File::create(path)?),
-                },
-            );
-        }
-        Ok(self.shards.get_mut(&shard).expect("shard just inserted"))
     }
 }
 

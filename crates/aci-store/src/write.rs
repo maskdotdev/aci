@@ -173,7 +173,7 @@ impl PartitionWriter<'_> {
         if self.symbols.is_some() || import_stems.is_some() {
             for node in &partition.nodes {
                 if let Some(symbols) = &mut self.symbols {
-                    symbols.write_node(node)?;
+                    symbols.write_node(node, &partition.path)?;
                 }
                 if let Some(import_stems) = &mut import_stems
                     && let Some(stem) = dependencies::import_stem_for_node(node)

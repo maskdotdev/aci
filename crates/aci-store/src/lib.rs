@@ -6,6 +6,7 @@ mod io;
 mod load;
 mod manifest;
 mod pack;
+mod shard_cache;
 mod symbols;
 mod tags;
 mod types;

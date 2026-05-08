@@ -102,6 +102,7 @@ fn replace_all_writer_loads_from_manifest_without_snapshot() {
         .expect("symbol index exists");
     assert_eq!(symbols.len(), 1);
     assert_eq!(symbols[0].file_id.as_ref(), Some(&replacement.file_id));
+    assert_eq!(symbols[0].path.as_ref(), Some(&replacement.path));
     let all_symbols = store
         .lookup_symbol_index(None)
         .expect("symbol index")

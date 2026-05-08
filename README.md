@@ -68,13 +68,19 @@ Query symbols:
 ```sh
 cargo run -p aci-cli -- query --store .aci symbols
 cargo run -p aci-cli -- query --store .aci symbols --name main
+cargo run -p aci-cli -- query --store .aci --pretty symbols --name main
+cargo run -p aci-cli -- query --store .aci --pretty --color always symbols --name main
 ```
+
+Symbol queries include jump locations in `path:line:column` form after the
+store is indexed with the current binary.
 
 Query dependencies and impact:
 
 ```sh
 cargo run -p aci-cli -- query --store .aci deps --file src/lib.rs
 cargo run -p aci-cli -- query --store .aci impact src/lib.rs
+cargo run -p aci-cli -- query --store .aci --pretty impact src/lib.rs
 ```
 
 Export the graph:

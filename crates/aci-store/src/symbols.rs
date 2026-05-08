@@ -1,31 +1,31 @@
-use crate::{SymbolIndexEntry, tags};
+use crate::{SymbolIndexEntry, shard_cache::ShardWriterCache, tags};
 use aci_core::{FileId, GraphNode, NodeKind, Result, SymbolKind, prefer_fact};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fs;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 pub(crate) struct SymbolIndexWriter {
     tmp_root: PathBuf,
     final_root: PathBuf,
-    shards: HashMap<u8, SymbolShardWriter>,
-}
-
-struct SymbolShardWriter {
-    writer: BufWriter<fs::File>,
+    shards: ShardWriterCache,
 }
 
 #[derive(Serialize)]
 struct BorrowedSymbolIndexEntry<'a> {
     #[serde(rename = "f", skip_serializing_if = "Option::is_none")]
     file_id: Option<&'a FileId>,
+    #[serde(rename = "r", skip_serializing_if = "Option::is_none")]
+    path: Option<&'a Path>,
     #[serde(rename = "n", skip_serializing_if = "Option::is_none")]
     name: Option<&'a str>,
     #[serde(rename = "q", skip_serializing_if = "Option::is_none")]
     qualified_name: Option<&'a str>,
     #[serde(rename = "t", skip_serializing_if = "Option::is_none")]
     symbol_kind: Option<u8>,
+    #[serde(rename = "s", skip_serializing_if = "Option::is_none")]
+    span: Option<&'a aci_core::SourceSpan>,
     #[serde(rename = "p", default, skip_serializing_if = "is_zero")]
     provenance: u8,
     #[serde(rename = "c", default, skip_serializing_if = "is_zero")]
@@ -36,12 +36,16 @@ struct BorrowedSymbolIndexEntry<'a> {
 struct CompactSymbolIndexEntry {
     #[serde(rename = "f")]
     file_id: Option<FileId>,
+    #[serde(rename = "r", default)]
+    path: Option<PathBuf>,
     #[serde(rename = "n")]
     name: Option<String>,
     #[serde(rename = "q")]
     qualified_name: Option<String>,
     #[serde(rename = "t")]
     symbol_kind: Option<u8>,
+    #[serde(rename = "s", default)]
+    span: Option<aci_core::SourceSpan>,
     #[serde(rename = "p", default)]
     provenance: u8,
     #[serde(rename = "c", default)]
@@ -76,52 +80,43 @@ impl SymbolIndexWriter {
         }
         fs::create_dir_all(&tmp_root)?;
         Ok(Self {
+            shards: ShardWriterCache::new(tmp_root.clone(), "jsonl"),
             tmp_root,
             final_root,
-            shards: HashMap::new(),
         })
     }
 
-    pub(crate) fn write_node(&mut self, node: &GraphNode) -> Result<()> {
+    pub(crate) fn write_node(&mut self, node: &GraphNode, path: &Path) -> Result<()> {
         if node.kind != NodeKind::Symbol {
             return Ok(());
         }
-        let shard = shard_for_name(node.name.as_deref());
-        let writer = self.open_shard(shard)?;
+        let mut line = Vec::new();
         serde_json::to_writer(
-            &mut writer.writer,
+            &mut line,
             &BorrowedSymbolIndexEntry {
                 file_id: node.file_id.as_ref(),
+                path: Some(path),
                 name: node.name.as_deref(),
                 qualified_name: node.qualified_name.as_deref(),
                 symbol_kind: node.symbol_kind.map(tags::encode_symbol_kind),
+                span: node.span.as_ref(),
                 provenance: tags::encode_provenance(node.provenance),
                 confidence: tags::encode_confidence(node.confidence),
             },
         )?;
-        writeln!(writer.writer)?;
+        line.push(b'\n');
+        self.shards
+            .write_all(shard_for_name(node.name.as_deref()), &line)?;
         Ok(())
     }
 
     pub(crate) fn finish(self) -> Result<()> {
-        for shard in self.shards.into_values() {
-            let mut writer = shard.writer;
-            writer.flush()?;
-        }
+        self.shards.flush()?;
         if self.final_root.exists() {
             fs::remove_dir_all(&self.final_root)?;
         }
         fs::rename(self.tmp_root, self.final_root)?;
         Ok(())
-    }
-
-    fn open_shard(&mut self, shard: u8) -> Result<&mut SymbolShardWriter> {
-        if !self.shards.contains_key(&shard) {
-            let path = self.tmp_root.join(shard_filename(shard));
-            let writer = BufWriter::new(fs::File::create(path)?);
-            self.shards.insert(shard, SymbolShardWriter { writer });
-        }
-        Ok(self.shards.get_mut(&shard).expect("shard just inserted"))
     }
 }
 
@@ -188,12 +183,14 @@ fn decode_entry(line: &str) -> Result<SymbolIndexEntry> {
     let entry: CompactSymbolIndexEntry = serde_json::from_str(line)?;
     Ok(SymbolIndexEntry {
         file_id: entry.file_id,
+        path: entry.path,
         name: entry.name,
         qualified_name: entry.qualified_name,
         symbol_kind: entry
             .symbol_kind
             .map(tags::decode_symbol_kind)
             .transpose()?,
+        span: entry.span,
         provenance: tags::decode_provenance(entry.provenance)?,
         confidence: tags::decode_confidence(entry.confidence)?,
     })

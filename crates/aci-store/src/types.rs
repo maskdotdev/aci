@@ -1,5 +1,6 @@
 use aci_core::{
-    Confidence, FactProvenance, FileId, GraphEdge, GraphPartition, NodeId, Result, SymbolKind,
+    Confidence, FactProvenance, FileId, GraphEdge, GraphPartition, NodeId, Result, SourceSpan,
+    SymbolKind,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -30,9 +31,11 @@ pub enum DeltaRecord {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SymbolIndexEntry {
     pub file_id: Option<FileId>,
+    pub path: Option<PathBuf>,
     pub name: Option<String>,
     pub qualified_name: Option<String>,
     pub symbol_kind: Option<SymbolKind>,
+    pub span: Option<SourceSpan>,
     pub provenance: FactProvenance,
     pub confidence: Confidence,
 }

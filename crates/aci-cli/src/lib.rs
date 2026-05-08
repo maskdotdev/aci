@@ -7,9 +7,13 @@ use aci_store::{GraphStore, check_partition_integrity};
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::fs;
-use std::io::Cursor;
+use std::io::{Cursor, IsTerminal};
 use std::path::PathBuf;
 use std::time::Instant;
+
+mod output;
+
+use output::{TableStyle, format_location, print_table};
 
 #[derive(Parser)]
 #[command(name = "aci", about = "Index and query code graphs")]
@@ -52,6 +56,10 @@ pub struct IndexArgs {
 pub struct QueryArgs {
     #[arg(long, default_value = ".aci")]
     store: PathBuf,
+    #[arg(long, help = "Render query results as aligned tables")]
+    pretty: bool,
+    #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
+    color: ColorChoice,
     #[command(subcommand)]
     command: QueryCommand,
 }
@@ -130,6 +138,23 @@ pub enum BenchExtractionVariant {
     TreeSitterEnrichment,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum ColorChoice {
+    Auto,
+    Always,
+    Never,
+}
+
+impl ColorChoice {
+    fn enabled(self) -> bool {
+        match self {
+            Self::Auto => std::io::stdout().is_terminal(),
+            Self::Always => true,
+            Self::Never => false,
+        }
+    }
+}
+
 impl BenchExtractionVariant {
     fn mode(self) -> ExtractionMode {
         match self {
@@ -199,19 +224,49 @@ pub fn run_index(args: IndexArgs) -> Result<()> {
 
 pub fn run_query(args: QueryArgs) -> Result<()> {
     let store = GraphStore::open(args.store)?;
+    let style = TableStyle::new(args.pretty && args.color.enabled());
     match args.command {
-        QueryCommand::Symbols { name } => print_symbols(&store, name.as_deref())?,
+        QueryCommand::Symbols { name } => {
+            print_symbols(&store, name.as_deref(), args.pretty, style)?
+        }
         QueryCommand::Deps { file } => {
             let engine = QueryEngine::new(store.load_latest()?);
             let file = fs::canonicalize(&file).unwrap_or(file);
-            for dep in engine.file_dependencies(&file) {
-                println!("{dep}");
+            let deps = engine.file_dependencies(&file);
+            if args.pretty {
+                print_table(
+                    &["Dependency"],
+                    deps.into_iter().map(|dep| vec![dep]),
+                    style,
+                );
+            } else {
+                for dep in deps {
+                    println!("{dep}");
+                }
             }
         }
         QueryCommand::Callers { symbol } => {
             let engine = QueryEngine::new(store.load_latest()?);
-            for node in engine.callers(&symbol) {
-                println!("{}", node.qualified_name.as_deref().unwrap_or_default());
+            let callers = engine
+                .callers(&symbol)
+                .into_iter()
+                .map(|node| {
+                    node.qualified_name
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_string()
+                })
+                .collect::<Vec<_>>();
+            if args.pretty {
+                print_table(
+                    &["Caller"],
+                    callers.into_iter().map(|caller| vec![caller]),
+                    style,
+                );
+            } else {
+                for caller in callers {
+                    println!("{caller}");
+                }
             }
         }
         QueryCommand::Impact { files } => {
@@ -220,8 +275,19 @@ pub fn run_query(args: QueryArgs) -> Result<()> {
                 .into_iter()
                 .map(|file| fs::canonicalize(&file).unwrap_or(file))
                 .collect::<Vec<_>>();
-            for file in engine.impact_from_files(&files) {
-                println!("{}", file.display());
+            let impacted = engine.impact_from_files(&files);
+            if args.pretty {
+                print_table(
+                    &["Impacted file"],
+                    impacted
+                        .into_iter()
+                        .map(|file| vec![file.display().to_string()]),
+                    style,
+                );
+            } else {
+                for file in impacted {
+                    println!("{}", file.display());
+                }
             }
         }
     }
@@ -276,37 +342,45 @@ fn normalize_changed_paths(
         .collect()
 }
 
-fn print_symbols(store: &GraphStore, name: Option<&str>) -> Result<()> {
+fn print_symbols(
+    store: &GraphStore,
+    name: Option<&str>,
+    pretty: bool,
+    style: TableStyle,
+) -> Result<()> {
+    let mut rows = Vec::new();
     if let Some(entries) = store.lookup_symbol_index(name)? {
         for entry in entries {
-            println!(
-                "{}\t{}\t{}",
-                entry.qualified_name.as_deref().unwrap_or_default(),
+            rows.push(vec![
+                entry.qualified_name.unwrap_or_default(),
                 entry
                     .symbol_kind
                     .map(|kind| format!("{kind:?}"))
                     .unwrap_or_default(),
-                entry
-                    .file_id
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_default()
-            );
+                format_location(entry.path.as_deref(), entry.span.as_ref())
+                    .or_else(|| entry.file_id.map(|file_id| file_id.to_string()))
+                    .unwrap_or_default(),
+            ]);
         }
     } else {
         let engine = QueryEngine::new(store.load_latest()?);
         for node in engine.lookup_symbols(name, None, None, None) {
-            println!(
-                "{}\t{}\t{}",
-                node.qualified_name.as_deref().unwrap_or_default(),
+            rows.push(vec![
+                node.qualified_name.clone().unwrap_or_default(),
                 node.symbol_kind
                     .map(|kind| format!("{kind:?}"))
                     .unwrap_or_default(),
-                node.file_id
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_default()
-            );
+                format_location(None, node.span.as_ref())
+                    .or_else(|| node.file_id.as_ref().map(ToString::to_string))
+                    .unwrap_or_default(),
+            ]);
+        }
+    }
+    if pretty {
+        print_table(&["Symbol", "Kind", "Location"], rows, style);
+    } else {
+        for row in rows {
+            println!("{}\t{}\t{}", row[0], row[1], row[2]);
         }
     }
     Ok(())
