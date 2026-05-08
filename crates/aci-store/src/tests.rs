@@ -76,7 +76,7 @@ fn replace_all_writer_loads_from_manifest_without_snapshot() {
     assert!(store.root().join("partitions/pack-00000.bin").exists());
     assert!(!store.root().join("symbols.jsonl").exists());
     assert!(store.root().join("symbols").is_dir());
-    assert!(store.root().join("deps.jsonl").exists());
+    assert!(store.root().join("deps.tsv").exists());
     assert_eq!(
         store
             .read_manifest()

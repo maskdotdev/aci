@@ -1,5 +1,4 @@
 use aci_core::{GraphNode, GraphPartition, NodeKind, Result};
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -18,7 +17,6 @@ pub struct StoreIncrementalPlan {
     pub files_to_reindex: Vec<PathBuf>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct DependencyIndexEntry {
     file_id: String,
     path: PathBuf,
@@ -27,8 +25,8 @@ struct DependencyIndexEntry {
 
 impl DependencyIndexWriter {
     pub(crate) fn create(root: &Path) -> Result<Self> {
-        let final_path = root.join("deps.jsonl");
-        let tmp_path = final_path.with_extension("jsonl.tmp");
+        let final_path = root.join("deps.tsv");
+        let tmp_path = final_path.with_extension("tsv.tmp");
         Ok(Self {
             writer: BufWriter::new(fs::File::create(&tmp_path)?),
             tmp_path,
@@ -61,12 +59,23 @@ impl DependencyIndexWriter {
     pub(crate) fn finish(mut self) -> Result<()> {
         self.writer.flush()?;
         drop(self.writer);
+        let legacy = self.final_path.with_file_name("deps.jsonl");
+        if legacy.exists() {
+            fs::remove_file(legacy)?;
+        }
         fs::rename(self.tmp_path, self.final_path)?;
         Ok(())
     }
 
     fn write_entry(&mut self, entry: &DependencyIndexEntry) -> Result<()> {
-        serde_json::to_writer(&mut self.writer, entry)?;
+        write!(self.writer, "{}\t", entry.file_id)?;
+        write!(self.writer, "{}\t", entry.path.display())?;
+        for (index, stem) in entry.import_stems.iter().enumerate() {
+            if index > 0 {
+                self.writer.write_all(b"\x1f")?;
+            }
+            self.writer.write_all(stem.as_bytes())?;
+        }
         writeln!(self.writer)?;
         Ok(())
     }
@@ -119,7 +128,7 @@ pub(crate) fn plan(root: &Path, changed_paths: &[PathBuf]) -> Result<Option<Stor
 }
 
 fn read(root: &Path) -> Result<Vec<DependencyIndexEntry>> {
-    let path = root.join("deps.jsonl");
+    let path = root.join("deps.tsv");
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -130,10 +139,30 @@ fn read(root: &Path) -> Result<Vec<DependencyIndexEntry>> {
         if line.trim().is_empty() {
             continue;
         }
-        let entry: DependencyIndexEntry = serde_json::from_str(&line)?;
+        let Some(entry) = parse_entry(&line) else {
+            continue;
+        };
         entries.insert(entry.file_id.clone(), entry);
     }
     Ok(entries.into_values().collect())
+}
+
+fn parse_entry(line: &str) -> Option<DependencyIndexEntry> {
+    let mut parts = line.splitn(3, '\t');
+    let file_id = parts.next()?.to_string();
+    let path = PathBuf::from(parts.next()?);
+    let import_stems = parts
+        .next()
+        .unwrap_or_default()
+        .split('\x1f')
+        .filter(|stem| !stem.is_empty())
+        .map(str::to_string)
+        .collect();
+    Some(DependencyIndexEntry {
+        file_id,
+        path,
+        import_stems,
+    })
 }
 
 fn module_stem(module: &str) -> Option<&str> {
