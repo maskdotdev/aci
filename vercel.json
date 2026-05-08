@@ -1,28 +1,19 @@
 {
-  "cleanUrls": true,
-  "headers": [
+  "routes": [
     {
-      "source": "/install.sh",
-      "headers": [
-        {
-          "key": "Content-Type",
-          "value": "text/x-shellscript; charset=utf-8"
-        }
-      ]
-    }
-  ],
-  "rewrites": [
-    {
-      "source": "/install.sh",
-      "destination": "/site/install.sh"
+      "src": "/install.sh",
+      "headers": {
+        "Content-Type": "text/x-shellscript; charset=utf-8"
+      },
+      "dest": "/site/install.sh"
     },
     {
-      "source": "/",
-      "destination": "/site/index.html"
+      "src": "/",
+      "dest": "/site/index.html"
     },
     {
-      "source": "/:path*",
-      "destination": "/site/:path*"
+      "src": "/(.*)",
+      "dest": "/site/$1"
     }
   ]
 }
