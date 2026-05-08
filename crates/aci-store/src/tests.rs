@@ -70,6 +70,8 @@ fn replace_all_writer_loads_from_manifest_without_snapshot() {
     assert!(!store.root().join("manifest.json").exists());
     assert!(store.root().join("manifest.jsonl").exists());
     assert!(store.root().join("partitions/pack-00000.jsonl").exists());
+    assert!(!store.root().join("symbols.jsonl").exists());
+    assert!(store.root().join("symbols").is_dir());
     assert_eq!(
         store
             .read_manifest()
@@ -93,6 +95,11 @@ fn replace_all_writer_loads_from_manifest_without_snapshot() {
         .expect("symbol index exists");
     assert_eq!(symbols.len(), 1);
     assert_eq!(symbols[0].file_id.as_ref(), Some(&replacement.file_id));
+    let all_symbols = store
+        .lookup_symbol_index(None)
+        .expect("symbol index")
+        .expect("symbol index exists");
+    assert_eq!(all_symbols.len(), 1);
     let latest = store.load_latest().expect("load latest");
     assert_eq!(latest.partitions.len(), 1);
     assert_eq!(latest.partitions[0].fingerprint, replacement.fingerprint);

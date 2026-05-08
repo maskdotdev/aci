@@ -353,7 +353,7 @@ fn decode_language(value: u8) -> Result<Language> {
     }
 }
 
-fn encode_symbol_kind(kind: SymbolKind) -> u8 {
+pub(crate) fn encode_symbol_kind(kind: SymbolKind) -> u8 {
     match kind {
         SymbolKind::Function => 0,
         SymbolKind::Method => 1,
@@ -368,7 +368,7 @@ fn encode_symbol_kind(kind: SymbolKind) -> u8 {
     }
 }
 
-fn decode_symbol_kind(value: u8) -> Result<SymbolKind> {
+pub(crate) fn decode_symbol_kind(value: u8) -> Result<SymbolKind> {
     match value {
         0 => Ok(SymbolKind::Function),
         1 => Ok(SymbolKind::Method),
@@ -384,7 +384,7 @@ fn decode_symbol_kind(value: u8) -> Result<SymbolKind> {
     }
 }
 
-fn encode_provenance(provenance: FactProvenance) -> u8 {
+pub(crate) fn encode_provenance(provenance: FactProvenance) -> u8 {
     match provenance {
         FactProvenance::StructuralScanner => 0,
         FactProvenance::TreeSitter => 1,
@@ -395,7 +395,7 @@ fn encode_provenance(provenance: FactProvenance) -> u8 {
     }
 }
 
-fn decode_provenance(value: u8) -> Result<FactProvenance> {
+pub(crate) fn decode_provenance(value: u8) -> Result<FactProvenance> {
     match value {
         0 => Ok(FactProvenance::StructuralScanner),
         1 => Ok(FactProvenance::TreeSitter),
@@ -407,7 +407,7 @@ fn decode_provenance(value: u8) -> Result<FactProvenance> {
     }
 }
 
-fn encode_confidence(confidence: Confidence) -> u8 {
+pub(crate) fn encode_confidence(confidence: Confidence) -> u8 {
     match confidence {
         Confidence::Medium => 0,
         Confidence::Low => 1,
@@ -416,7 +416,7 @@ fn encode_confidence(confidence: Confidence) -> u8 {
     }
 }
 
-fn decode_confidence(value: u8) -> Result<Confidence> {
+pub(crate) fn decode_confidence(value: u8) -> Result<Confidence> {
     match value {
         0 => Ok(Confidence::Medium),
         1 => Ok(Confidence::Low),

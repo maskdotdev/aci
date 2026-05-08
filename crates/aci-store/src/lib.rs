@@ -1,8 +1,9 @@
 mod compact;
+mod symbols;
 
 use aci_core::{
     Confidence, EdgeKind, FactProvenance, FileId, GraphEdge, GraphPartition, GraphSnapshot, NodeId,
-    NodeKind, Result, SymbolKind, prefer_fact,
+    NodeKind, Result, SymbolKind,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -64,7 +65,7 @@ pub struct PartitionWriter<'a> {
     manifest_jsonl: Option<ManifestJsonlWriter>,
     delta: Option<fs::File>,
     pack: Option<PartitionPack>,
-    symbols: Option<SymbolIndexWriter>,
+    symbols: Option<symbols::SymbolIndexWriter>,
     replace_all: bool,
     written: usize,
 }
@@ -75,22 +76,6 @@ struct PartitionPack {
     final_path: PathBuf,
     manifest_path: PathBuf,
     next_index: usize,
-}
-
-struct SymbolIndexWriter {
-    writer: BufWriter<fs::File>,
-    tmp_path: PathBuf,
-    final_path: PathBuf,
-}
-
-#[derive(Serialize)]
-struct BorrowedSymbolIndexEntry<'a> {
-    pub file_id: Option<&'a FileId>,
-    pub name: Option<&'a str>,
-    pub qualified_name: Option<&'a str>,
-    pub symbol_kind: Option<SymbolKind>,
-    pub provenance: FactProvenance,
-    pub confidence: Confidence,
 }
 
 struct ManifestJsonlWriter {
@@ -119,8 +104,6 @@ impl GraphStore {
     pub fn replace_all_writer(&self) -> Result<PartitionWriter<'_>> {
         let final_path = self.root.join("partitions").join("pack-00000.jsonl");
         let tmp_path = final_path.with_extension("jsonl.tmp");
-        let symbols_final_path = self.root.join("symbols.jsonl");
-        let symbols_tmp_path = symbols_final_path.with_extension("jsonl.tmp");
         let manifest_final_path = self.root.join("manifest.jsonl");
         let manifest_tmp_path = manifest_final_path.with_extension("jsonl.tmp");
         Ok(PartitionWriter {
@@ -138,11 +121,7 @@ impl GraphStore {
                 manifest_path: PathBuf::from("partitions").join("pack-00000.jsonl"),
                 next_index: 0,
             }),
-            symbols: Some(SymbolIndexWriter {
-                writer: BufWriter::new(fs::File::create(&symbols_tmp_path)?),
-                tmp_path: symbols_tmp_path,
-                final_path: symbols_final_path,
-            }),
+            symbols: Some(symbols::SymbolIndexWriter::new(&self.root)?),
             replace_all: true,
             written: 0,
         })
@@ -264,34 +243,7 @@ impl GraphStore {
     }
 
     pub fn lookup_symbol_index(&self, name: Option<&str>) -> Result<Option<Vec<SymbolIndexEntry>>> {
-        let path = self.root.join("symbols.jsonl");
-        if !path.exists() {
-            return Ok(None);
-        }
-        let reader = BufReader::new(fs::File::open(path)?);
-        let mut selected = BTreeMap::<SymbolIndexKey, SymbolIndexEntry>::new();
-        for line in reader.lines() {
-            let entry: SymbolIndexEntry = serde_json::from_str(&line?)?;
-            if name.is_some_and(|name| entry.name.as_deref() != Some(name)) {
-                continue;
-            }
-            let key = SymbolIndexKey::from(&entry);
-            match selected.get(&key) {
-                Some(existing)
-                    if prefer_fact(
-                        (existing.provenance, existing.confidence),
-                        (entry.provenance, entry.confidence),
-                    ) =>
-                {
-                    selected.insert(key, entry);
-                }
-                None => {
-                    selected.insert(key, entry);
-                }
-                _ => {}
-            }
-        }
-        Ok(Some(selected.into_values().collect()))
+        symbols::lookup(&self.root, name)
     }
 
     fn read_manifest_jsonl(&self) -> Result<Vec<PartitionEntry>> {
@@ -417,23 +369,8 @@ impl PartitionWriter<'_> {
             writeln!(manifest_jsonl.writer)?;
         }
         if let Some(symbols) = &mut self.symbols {
-            for node in partition
-                .nodes
-                .iter()
-                .filter(|node| node.kind == NodeKind::Symbol)
-            {
-                serde_json::to_writer(
-                    &mut symbols.writer,
-                    &BorrowedSymbolIndexEntry {
-                        file_id: node.file_id.as_ref(),
-                        name: node.name.as_deref(),
-                        qualified_name: node.qualified_name.as_deref(),
-                        symbol_kind: node.symbol_kind,
-                        provenance: node.provenance,
-                        confidence: node.confidence,
-                    },
-                )?;
-                writeln!(symbols.writer)?;
+            for node in &partition.nodes {
+                symbols.write_node(node)?;
             }
         }
         self.written += 1;
@@ -446,10 +383,8 @@ impl PartitionWriter<'_> {
             drop(pack.writer);
             fs::rename(pack.tmp_path, pack.final_path)?;
         }
-        if let Some(mut symbols) = self.symbols.take() {
-            symbols.writer.flush()?;
-            drop(symbols.writer);
-            fs::rename(symbols.tmp_path, symbols.final_path)?;
+        if let Some(symbols) = self.symbols.take() {
+            symbols.finish(&self.store.root)?;
         }
         if let Some(mut manifest_jsonl) = self.manifest_jsonl.take() {
             manifest_jsonl.writer.flush()?;
