@@ -102,10 +102,12 @@ impl GraphStore {
     }
 
     pub fn replace_all_writer(&self) -> Result<PartitionWriter<'_>> {
-        let final_path = self.root.join("partitions").join("pack-00000.jsonl");
-        let tmp_path = final_path.with_extension("jsonl.tmp");
+        let final_path = self.root.join("partitions").join("pack-00000.bin");
+        let tmp_path = final_path.with_extension("bin.tmp");
         let manifest_final_path = self.root.join("manifest.jsonl");
         let manifest_tmp_path = manifest_final_path.with_extension("jsonl.tmp");
+        let mut pack_writer = BufWriter::new(fs::File::create(&tmp_path)?);
+        compact::write_pack_header(&mut pack_writer)?;
         Ok(PartitionWriter {
             store: self,
             manifest_jsonl: Some(ManifestJsonlWriter {
@@ -115,10 +117,10 @@ impl GraphStore {
             }),
             delta: None,
             pack: Some(PartitionPack {
-                writer: BufWriter::new(fs::File::create(&tmp_path)?),
+                writer: pack_writer,
                 tmp_path,
                 final_path,
-                manifest_path: PathBuf::from("partitions").join("pack-00000.jsonl"),
+                manifest_path: PathBuf::from("partitions").join("pack-00000.bin"),
                 next_index: 0,
             }),
             symbols: Some(symbols::SymbolIndexWriter::new(&self.root)?),
@@ -224,13 +226,19 @@ impl GraphStore {
                 problems.push(format!("partition file {} is missing", path.display()));
                 continue;
             }
-            let reader = BufReader::new(fs::File::open(path)?);
-            for (record_index, line) in reader.lines().enumerate() {
+            let mut reader = BufReader::new(fs::File::open(path)?);
+            compact::read_pack_header(&mut reader)?;
+            let mut record_index = 0;
+            while !entries.is_empty() {
+                let Some(partition) = compact::read_partition_binary(&mut reader)? else {
+                    break;
+                };
                 let Some(entry) = entries.remove(&record_index) else {
+                    record_index += 1;
                     continue;
                 };
-                let partition = compact::read_partition_line(&line?)?;
                 check_manifest_partition(&entry, &partition, &mut problems);
+                record_index += 1;
             }
             for (record_index, entry) in entries {
                 problems.push(format!(
@@ -324,12 +332,18 @@ impl GraphStore {
             }
         }
         for (partition_file, entries) in packed_entries {
-            let reader = BufReader::new(fs::File::open(self.root.join(partition_file))?);
-            for (record_index, line) in reader.lines().enumerate() {
+            let mut reader = BufReader::new(fs::File::open(self.root.join(partition_file))?);
+            compact::read_pack_header(&mut reader)?;
+            let max_record_index = entries.iter().next_back().copied();
+            let mut record_index = 0;
+            while max_record_index.is_some_and(|max| record_index <= max) {
+                let Some(partition) = compact::read_partition_binary(&mut reader)? else {
+                    break;
+                };
                 if entries.contains(&record_index) {
-                    let partition = compact::read_partition_line(&line?)?;
                     snapshot.replace_partition(partition);
                 }
+                record_index += 1;
             }
         }
         Ok(snapshot)
@@ -340,8 +354,7 @@ impl PartitionWriter<'_> {
     pub fn write(&mut self, partition: &GraphPartition) -> Result<()> {
         let (partition_file, record_index) = if let Some(pack) = &mut self.pack {
             let record_index = pack.next_index;
-            compact::write_partition(&mut pack.writer, partition)?;
-            writeln!(pack.writer)?;
+            compact::write_partition_binary(&mut pack.writer, partition)?;
             pack.next_index += 1;
             (pack.manifest_path.clone(), Some(record_index))
         } else {

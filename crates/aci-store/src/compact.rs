@@ -3,10 +3,13 @@ use aci_core::{
     GraphNode, GraphPartition, Language, LineColumn, NodeId, NodeKind, PartitionMetrics, Result,
     Severity, SourceSpan, SymbolKind,
 };
+use bincode::Options;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{ErrorKind, Read, Write};
 use std::path::PathBuf;
+
+const PACK_MAGIC: &[u8] = b"ACIPACK1\n";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CompactPartition {
@@ -36,21 +39,21 @@ struct CompactNode {
     id: u32,
     #[serde(rename = "k")]
     kind: u8,
-    #[serde(rename = "l", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "l")]
     language: Option<u8>,
-    #[serde(rename = "n", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "n")]
     name: Option<u32>,
-    #[serde(rename = "q", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "q")]
     qualified_name: Option<u32>,
-    #[serde(rename = "t", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "t")]
     symbol_kind: Option<u8>,
-    #[serde(rename = "f", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "f")]
     file_id: Option<u32>,
-    #[serde(rename = "s", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "s")]
     span: Option<CompactSpan>,
-    #[serde(rename = "p", default, skip_serializing_if = "is_default_provenance")]
+    #[serde(rename = "p")]
     provenance: u8,
-    #[serde(rename = "c", default, skip_serializing_if = "is_zero")]
+    #[serde(rename = "c")]
     confidence: u8,
 }
 
@@ -64,11 +67,11 @@ struct CompactEdge {
     from: u32,
     #[serde(rename = "t")]
     to: u32,
-    #[serde(rename = "s", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "s")]
     span: Option<CompactSpan>,
-    #[serde(rename = "p", default, skip_serializing_if = "is_default_provenance")]
+    #[serde(rename = "p")]
     provenance: u8,
-    #[serde(rename = "c", default, skip_serializing_if = "is_zero")]
+    #[serde(rename = "c")]
     confidence: u8,
 }
 
@@ -78,9 +81,9 @@ struct CompactDiagnostic {
     severity: u8,
     #[serde(rename = "m")]
     message: u32,
-    #[serde(rename = "f", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "f")]
     file_id: Option<u32>,
-    #[serde(rename = "r", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "r")]
     span: Option<CompactSpan>,
 }
 
@@ -105,16 +108,64 @@ impl StringTable {
     }
 }
 
-pub(crate) fn write_partition<W: Write>(writer: W, partition: &GraphPartition) -> Result<()> {
-    Ok(serde_json::to_writer(
-        writer,
-        &CompactPartition::from_partition(partition),
-    )?)
+pub(crate) fn write_pack_header(writer: &mut impl Write) -> Result<()> {
+    writer.write_all(PACK_MAGIC)?;
+    Ok(())
 }
 
-pub(crate) fn read_partition_line(line: &str) -> Result<GraphPartition> {
-    let compact: CompactPartition = serde_json::from_str(line)?;
-    compact.into_partition()
+pub(crate) fn read_pack_header(reader: &mut impl Read) -> Result<()> {
+    let mut magic = [0; PACK_MAGIC.len()];
+    reader.read_exact(&mut magic)?;
+    if magic != PACK_MAGIC {
+        return Err(AciError::Message(
+            "partition pack has invalid header".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn write_partition_binary(
+    writer: &mut impl Write,
+    partition: &GraphPartition,
+) -> Result<()> {
+    let bytes = bincode_options()
+        .serialize(&CompactPartition::from_partition(partition))
+        .map_err(|error| AciError::Message(format!("partition pack encode failed: {error}")))?;
+    let len = u32::try_from(bytes.len())
+        .map_err(|_| AciError::Message("partition pack record is too large".to_string()))?;
+    writer.write_all(&len.to_le_bytes())?;
+    writer.write_all(&bytes)?;
+    Ok(())
+}
+
+pub(crate) fn read_partition_binary(reader: &mut impl Read) -> Result<Option<GraphPartition>> {
+    let mut first = [0; 1];
+    if reader.read(&mut first)? == 0 {
+        return Ok(None);
+    }
+    let mut len_bytes = [0; 4];
+    len_bytes[0] = first[0];
+    reader
+        .read_exact(&mut len_bytes[1..])
+        .map_err(|error| match error.kind() {
+            ErrorKind::UnexpectedEof => {
+                AciError::Message("partition pack has truncated length".to_string())
+            }
+            _ => AciError::from(error),
+        })?;
+    let len = u32::from_le_bytes(len_bytes) as usize;
+    let mut bytes = vec![0; len];
+    reader.read_exact(&mut bytes)?;
+    let compact: CompactPartition = bincode_options()
+        .deserialize(&bytes)
+        .map_err(|error| AciError::Message(format!("partition pack decode failed: {error}")))?;
+    compact.into_partition().map(Some)
+}
+
+fn bincode_options() -> impl Options {
+    bincode::DefaultOptions::new()
+        .with_varint_encoding()
+        .with_little_endian()
 }
 
 impl CompactPartition {
@@ -511,12 +562,4 @@ fn decode_severity(value: u8) -> Result<Severity> {
 
 fn invalid_tag(field: &str, value: u8) -> AciError {
     AciError::Message(format!("compact partition has invalid {field} tag {value}"))
-}
-
-fn is_default_provenance(provenance: &u8) -> bool {
-    *provenance == 0
-}
-
-fn is_zero(value: &u8) -> bool {
-    *value == 0
 }

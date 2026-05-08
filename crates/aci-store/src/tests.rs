@@ -69,7 +69,7 @@ fn replace_all_writer_loads_from_manifest_without_snapshot() {
     assert!(!store.root().join("snapshot.json").exists());
     assert!(!store.root().join("manifest.json").exists());
     assert!(store.root().join("manifest.jsonl").exists());
-    assert!(store.root().join("partitions/pack-00000.jsonl").exists());
+    assert!(store.root().join("partitions/pack-00000.bin").exists());
     assert!(!store.root().join("symbols.jsonl").exists());
     assert!(store.root().join("symbols").is_dir());
     assert_eq!(
@@ -114,11 +114,10 @@ fn packed_partition_records_use_compact_shape() {
     writer.write(&replacement).expect("write replacement");
     writer.finish().expect("finish writer");
 
-    let pack = fs::read_to_string(store.root().join("partitions/pack-00000.jsonl")).expect("pack");
-    assert!(pack.contains("\"s\":"));
-    assert!(pack.contains("\"n\":"));
-    assert!(!pack.contains("\"nodes\""));
-    assert!(!pack.contains("\"file_id\""));
+    let pack = fs::read(store.root().join("partitions/pack-00000.bin")).expect("pack");
+    assert!(pack.starts_with(b"ACIPACK1\n"));
+    assert!(!String::from_utf8_lossy(&pack).contains("\"nodes\""));
+    assert!(!String::from_utf8_lossy(&pack).contains("\"file_id\""));
     let latest = store.load_latest().expect("load latest");
     assert_eq!(latest.partitions, vec![replacement]);
 }
