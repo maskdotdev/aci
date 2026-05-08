@@ -1,4 +1,7 @@
-use aci_core::{EdgeKind, GraphEdge, GraphPartition, GraphSnapshot, NodeId, NodeKind, Result};
+use aci_core::{
+    Confidence, EdgeKind, FactProvenance, FileId, GraphEdge, GraphPartition, GraphSnapshot, NodeId,
+    NodeKind, Result, SymbolKind, prefer_fact,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, OpenOptions};
@@ -38,6 +41,17 @@ pub enum DeltaRecord {
     ReplacePartition { partition: GraphPartition },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SymbolIndexEntry {
+    pub file_id: Option<FileId>,
+    pub path: PathBuf,
+    pub name: Option<String>,
+    pub qualified_name: Option<String>,
+    pub symbol_kind: Option<SymbolKind>,
+    pub provenance: FactProvenance,
+    pub confidence: Confidence,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct AdjacencyIndex {
     pub outgoing: HashMap<NodeId, Vec<GraphEdge>>,
@@ -53,6 +67,7 @@ pub struct PartitionWriter<'a> {
     manifest: Manifest,
     delta: Option<fs::File>,
     pack: Option<PartitionPack>,
+    symbols: Option<SymbolIndexWriter>,
     replace_all: bool,
     written: usize,
 }
@@ -63,6 +78,12 @@ struct PartitionPack {
     final_path: PathBuf,
     manifest_path: PathBuf,
     next_index: usize,
+}
+
+struct SymbolIndexWriter {
+    writer: BufWriter<fs::File>,
+    tmp_path: PathBuf,
+    final_path: PathBuf,
 }
 
 impl GraphStore {
@@ -99,6 +120,8 @@ impl GraphStore {
     pub fn replace_all_writer(&self) -> Result<PartitionWriter<'_>> {
         let final_path = self.root.join("partitions").join("pack-00000.jsonl");
         let tmp_path = final_path.with_extension("jsonl.tmp");
+        let symbols_final_path = self.root.join("symbols.jsonl");
+        let symbols_tmp_path = symbols_final_path.with_extension("jsonl.tmp");
         Ok(PartitionWriter {
             store: self,
             manifest: Manifest::default(),
@@ -109,6 +132,11 @@ impl GraphStore {
                 final_path,
                 manifest_path: PathBuf::from("partitions").join("pack-00000.jsonl"),
                 next_index: 0,
+            }),
+            symbols: Some(SymbolIndexWriter {
+                writer: BufWriter::new(fs::File::create(&symbols_tmp_path)?),
+                tmp_path: symbols_tmp_path,
+                final_path: symbols_final_path,
             }),
             replace_all: true,
             written: 0,
@@ -126,6 +154,7 @@ impl GraphStore {
                     .open(self.root.join("delta.jsonl"))?,
             ),
             pack: None,
+            symbols: None,
             replace_all: false,
             written: 0,
         })
@@ -230,6 +259,37 @@ impl GraphStore {
         Ok(problems)
     }
 
+    pub fn lookup_symbol_index(&self, name: Option<&str>) -> Result<Option<Vec<SymbolIndexEntry>>> {
+        let path = self.root.join("symbols.jsonl");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let reader = BufReader::new(fs::File::open(path)?);
+        let mut selected = BTreeMap::<SymbolIndexKey, SymbolIndexEntry>::new();
+        for line in reader.lines() {
+            let entry: SymbolIndexEntry = serde_json::from_str(&line?)?;
+            if name.is_some_and(|name| entry.name.as_deref() != Some(name)) {
+                continue;
+            }
+            let key = SymbolIndexKey::from(&entry);
+            match selected.get(&key) {
+                Some(existing)
+                    if prefer_fact(
+                        (existing.provenance, existing.confidence),
+                        (entry.provenance, entry.confidence),
+                    ) =>
+                {
+                    selected.insert(key, entry);
+                }
+                None => {
+                    selected.insert(key, entry);
+                }
+                _ => {}
+            }
+        }
+        Ok(Some(selected.into_values().collect()))
+    }
+
     fn write_manifest(&self, manifest: &Manifest) -> Result<()> {
         write_json_atomic(&self.root.join("manifest.json"), manifest)
     }
@@ -330,6 +390,27 @@ impl PartitionWriter<'_> {
                 record_index,
             },
         );
+        if let Some(symbols) = &mut self.symbols {
+            for node in partition
+                .nodes
+                .iter()
+                .filter(|node| node.kind == NodeKind::Symbol)
+            {
+                serde_json::to_writer(
+                    &mut symbols.writer,
+                    &SymbolIndexEntry {
+                        file_id: node.file_id.clone(),
+                        path: partition.path.clone(),
+                        name: node.name.clone(),
+                        qualified_name: node.qualified_name.clone(),
+                        symbol_kind: node.symbol_kind,
+                        provenance: node.provenance,
+                        confidence: node.confidence,
+                    },
+                )?;
+                writeln!(symbols.writer)?;
+            }
+        }
         self.written += 1;
         Ok(())
     }
@@ -339,6 +420,11 @@ impl PartitionWriter<'_> {
             pack.writer.flush()?;
             drop(pack.writer);
             fs::rename(pack.tmp_path, pack.final_path)?;
+        }
+        if let Some(mut symbols) = self.symbols.take() {
+            symbols.writer.flush()?;
+            drop(symbols.writer);
+            fs::rename(symbols.tmp_path, symbols.final_path)?;
         }
         self.store.write_manifest(&self.manifest)?;
         if self.replace_all {
@@ -438,6 +524,25 @@ fn check_manifest_partition(
     check_partition_file_integrity(partition, problems);
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct SymbolIndexKey {
+    file_id: Option<FileId>,
+    name: Option<String>,
+    qualified_name: Option<String>,
+    kind: Option<SymbolKind>,
+}
+
+impl From<&SymbolIndexEntry> for SymbolIndexKey {
+    fn from(entry: &SymbolIndexEntry) -> Self {
+        Self {
+            file_id: entry.file_id.clone(),
+            name: entry.name.clone(),
+            qualified_name: entry.qualified_name.clone(),
+            kind: entry.symbol_kind,
+        }
+    }
+}
+
 fn check_partition_file_integrity(partition: &GraphPartition, problems: &mut Vec<String>) {
     for node in &partition.nodes {
         if node.kind == NodeKind::Symbol && node.file_id.is_none() {
@@ -529,6 +634,15 @@ mod tests {
             Some("a.py".to_string()),
             None,
         ));
+        partition.nodes.push(GraphNode::deterministic(
+            &repo,
+            Some(&file.file_id),
+            NodeKind::Symbol,
+            Language::Python,
+            Some("a".to_string()),
+            Some("a".to_string()),
+            None,
+        ));
         partition
     }
 
@@ -583,6 +697,12 @@ mod tests {
                 .expect("partition file check")
                 .is_empty()
         );
+        let symbols = store
+            .lookup_symbol_index(Some("a"))
+            .expect("symbol index")
+            .expect("symbol index exists");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].path, replacement.path);
         let latest = store.load_latest().expect("load latest");
         assert_eq!(latest.partitions.len(), 1);
         assert_eq!(latest.partitions[0].fingerprint, replacement.fingerprint);

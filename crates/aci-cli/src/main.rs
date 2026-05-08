@@ -192,35 +192,56 @@ fn index(args: IndexArgs) -> Result<()> {
 
 fn query(args: QueryArgs) -> Result<()> {
     let store = GraphStore::open(args.store)?;
-    let engine = QueryEngine::new(store.load_latest()?);
     match args.command {
         QueryCommand::Symbols { name } => {
-            for node in engine.lookup_symbols(name.as_deref(), None, None, None) {
-                println!(
-                    "{}\t{}\t{}",
-                    node.qualified_name.as_deref().unwrap_or_default(),
-                    node.symbol_kind
-                        .map(|kind| format!("{kind:?}"))
-                        .unwrap_or_default(),
-                    node.file_id
-                        .as_ref()
-                        .map(ToString::to_string)
-                        .unwrap_or_default()
-                );
+            if let Some(entries) = store.lookup_symbol_index(name.as_deref())? {
+                for entry in entries {
+                    println!(
+                        "{}\t{}\t{}",
+                        entry.qualified_name.as_deref().unwrap_or_default(),
+                        entry
+                            .symbol_kind
+                            .map(|kind| format!("{kind:?}"))
+                            .unwrap_or_default(),
+                        entry
+                            .file_id
+                            .as_ref()
+                            .map(ToString::to_string)
+                            .unwrap_or_default()
+                    );
+                }
+            } else {
+                let engine = QueryEngine::new(store.load_latest()?);
+                for node in engine.lookup_symbols(name.as_deref(), None, None, None) {
+                    println!(
+                        "{}\t{}\t{}",
+                        node.qualified_name.as_deref().unwrap_or_default(),
+                        node.symbol_kind
+                            .map(|kind| format!("{kind:?}"))
+                            .unwrap_or_default(),
+                        node.file_id
+                            .as_ref()
+                            .map(ToString::to_string)
+                            .unwrap_or_default()
+                    );
+                }
             }
         }
         QueryCommand::Deps { file } => {
+            let engine = QueryEngine::new(store.load_latest()?);
             let file = fs::canonicalize(&file).unwrap_or(file);
             for dep in engine.file_dependencies(&file) {
                 println!("{dep}");
             }
         }
         QueryCommand::Callers { symbol } => {
+            let engine = QueryEngine::new(store.load_latest()?);
             for node in engine.callers(&symbol) {
                 println!("{}", node.qualified_name.as_deref().unwrap_or_default());
             }
         }
         QueryCommand::Impact { files } => {
+            let engine = QueryEngine::new(store.load_latest()?);
             let files = files
                 .into_iter()
                 .map(|file| fs::canonicalize(&file).unwrap_or(file))
