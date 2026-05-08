@@ -497,6 +497,12 @@ pub fn check_snapshot_integrity(snapshot: &GraphSnapshot) -> Vec<String> {
     problems
 }
 
+pub fn check_partition_integrity(partition: &GraphPartition) -> Vec<String> {
+    let mut problems = Vec::new();
+    check_partition_file_integrity(partition, &mut problems);
+    problems
+}
+
 fn check_manifest_partition(
     entry: &PartitionEntry,
     partition: &GraphPartition,

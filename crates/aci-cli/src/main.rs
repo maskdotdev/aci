@@ -3,7 +3,7 @@ use aci_core::RepositoryId;
 use aci_export::{ExportFormat, export_snapshot, import_scip_enrichment};
 use aci_indexer::{IndexOptions, IndexPipeline, plan_incremental_reindex};
 use aci_query::QueryEngine;
-use aci_store::GraphStore;
+use aci_store::{GraphStore, check_partition_integrity};
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::fs;
@@ -147,9 +147,8 @@ fn index(args: IndexArgs) -> Result<()> {
     }
     let pipeline = IndexPipeline::default();
     let store = GraphStore::open(args.store)?;
-    let mut full_index = false;
+    let mut integrity = Vec::new();
     if args.changed.is_empty() {
-        full_index = true;
         let mut writer = store.replace_all_writer()?;
         let summary = pipeline
             .stream_path(options, |partition| writer.write(partition))
@@ -159,6 +158,7 @@ fn index(args: IndexArgs) -> Result<()> {
             "indexed {} files, skipped {}, diagnostics {}",
             summary.indexed_files, summary.skipped_files, summary.diagnostics
         );
+        integrity = store.partition_file_check()?;
     } else {
         let root = fs::canonicalize(&args.path)
             .with_context(|| format!("canonicalizing {}", args.path.display()))?;
@@ -181,6 +181,9 @@ fn index(args: IndexArgs) -> Result<()> {
         };
         let partitions =
             pipeline.index_changed_paths(&root, &plan.files_to_reindex, options.workers)?;
+        for partition in &partitions {
+            integrity.extend(check_partition_integrity(partition));
+        }
         store.replace_partitions(&partitions)?;
         println!(
             "re-indexed {} changed/dependent files ({} direct, {} reverse dependencies)",
@@ -189,11 +192,6 @@ fn index(args: IndexArgs) -> Result<()> {
             plan.reverse_dependencies.len()
         );
     }
-    let integrity = if full_index {
-        store.partition_file_check()?
-    } else {
-        store.integrity_check()?
-    };
     for problem in integrity {
         eprintln!("integrity: {problem}");
     }
