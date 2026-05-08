@@ -1,12 +1,15 @@
-use aci_core::{
-    AciError, Confidence, Diagnostic, EdgeId, EdgeKind, FactProvenance, FileId, GraphEdge,
-    GraphNode, GraphPartition, Language, LineColumn, NodeId, NodeKind, PartitionMetrics, Result,
-    Severity, SourceSpan, SymbolKind,
+use crate::tags::{
+    decode_confidence, decode_edge_kind, decode_language, decode_node_kind, decode_provenance,
+    decode_severity, decode_symbol_kind, encode_confidence, encode_edge_kind, encode_language,
+    encode_node_kind, encode_provenance, encode_severity, encode_symbol_kind,
 };
-use bincode::Options;
+use aci_core::{
+    AciError, Diagnostic, EdgeId, FileId, GraphEdge, GraphNode, GraphPartition, Language,
+    LineColumn, NodeId, PartitionMetrics, Result, SourceSpan,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 
 const PACK_MAGIC: &[u8] = b"ACIPACK1\n";
@@ -128,44 +131,14 @@ pub(crate) fn write_partition_binary(
     writer: &mut impl Write,
     partition: &GraphPartition,
 ) -> Result<()> {
-    let bytes = bincode_options()
-        .serialize(&CompactPartition::from_partition(partition))
-        .map_err(|error| AciError::Message(format!("partition pack encode failed: {error}")))?;
-    let len = u32::try_from(bytes.len())
-        .map_err(|_| AciError::Message("partition pack record is too large".to_string()))?;
-    writer.write_all(&len.to_le_bytes())?;
-    writer.write_all(&bytes)?;
-    Ok(())
+    CompactPartition::from_partition(partition).write_binary(writer)
 }
 
 pub(crate) fn read_partition_binary(reader: &mut impl Read) -> Result<Option<GraphPartition>> {
-    let mut first = [0; 1];
-    if reader.read(&mut first)? == 0 {
+    let Some(compact) = CompactPartition::read_binary(reader)? else {
         return Ok(None);
-    }
-    let mut len_bytes = [0; 4];
-    len_bytes[0] = first[0];
-    reader
-        .read_exact(&mut len_bytes[1..])
-        .map_err(|error| match error.kind() {
-            ErrorKind::UnexpectedEof => {
-                AciError::Message("partition pack has truncated length".to_string())
-            }
-            _ => AciError::from(error),
-        })?;
-    let len = u32::from_le_bytes(len_bytes) as usize;
-    let mut bytes = vec![0; len];
-    reader.read_exact(&mut bytes)?;
-    let compact: CompactPartition = bincode_options()
-        .deserialize(&bytes)
-        .map_err(|error| AciError::Message(format!("partition pack decode failed: {error}")))?;
+    };
     compact.into_partition().map(Some)
-}
-
-fn bincode_options() -> impl Options {
-    bincode::DefaultOptions::new()
-        .with_varint_encoding()
-        .with_little_endian()
 }
 
 impl CompactPartition {
@@ -275,6 +248,156 @@ impl CompactPartition {
             },
         })
     }
+
+    fn write_binary(self, writer: &mut impl Write) -> Result<()> {
+        write_len(writer, self.strings.len(), "strings")?;
+        for value in self.strings {
+            write_string(writer, &value)?;
+        }
+        write_var_u32(writer, self.file_id)?;
+        write_var_u32(writer, self.path)?;
+        write_u8(writer, self.language)?;
+        write_var_u32(writer, self.fingerprint)?;
+        for metric in self.metrics {
+            write_var_u64(writer, metric)?;
+        }
+        write_len(writer, self.nodes.len(), "nodes")?;
+        for node in self.nodes {
+            node.write_binary(writer)?;
+        }
+        write_len(writer, self.edges.len(), "edges")?;
+        for edge in self.edges {
+            edge.write_binary(writer)?;
+        }
+        write_len(writer, self.diagnostics.len(), "diagnostics")?;
+        for diagnostic in self.diagnostics {
+            diagnostic.write_binary(writer)?;
+        }
+        Ok(())
+    }
+
+    fn read_binary(reader: &mut impl Read) -> Result<Option<Self>> {
+        let Some(string_count) = read_var_u64_optional(reader)? else {
+            return Ok(None);
+        };
+        let string_count = u32::try_from(string_count).map_err(|_| {
+            AciError::Message("partition pack string count does not fit u32".to_string())
+        })?;
+        let mut strings = Vec::with_capacity(capacity(string_count, "strings")?);
+        for _ in 0..string_count {
+            strings.push(read_string(reader)?);
+        }
+        let file_id = read_var_u32(reader, "file id")?;
+        let path = read_var_u32(reader, "path")?;
+        let language = read_u8(reader, "language")?;
+        let fingerprint = read_var_u32(reader, "fingerprint")?;
+        let metrics = [
+            read_var_u64(reader, "parse time")?,
+            read_var_u64(reader, "extraction time")?,
+            read_var_u64(reader, "query captures")?,
+        ];
+        let node_count = read_var_u32(reader, "node count")?;
+        let mut nodes = Vec::with_capacity(capacity(node_count, "nodes")?);
+        for _ in 0..node_count {
+            nodes.push(CompactNode::read_binary(reader)?);
+        }
+        let edge_count = read_var_u32(reader, "edge count")?;
+        let mut edges = Vec::with_capacity(capacity(edge_count, "edges")?);
+        for _ in 0..edge_count {
+            edges.push(CompactEdge::read_binary(reader)?);
+        }
+        let diagnostic_count = read_var_u32(reader, "diagnostic count")?;
+        let mut diagnostics = Vec::with_capacity(capacity(diagnostic_count, "diagnostics")?);
+        for _ in 0..diagnostic_count {
+            diagnostics.push(CompactDiagnostic::read_binary(reader)?);
+        }
+        Ok(Some(Self {
+            strings,
+            file_id,
+            path,
+            language,
+            fingerprint,
+            nodes,
+            edges,
+            diagnostics,
+            metrics,
+        }))
+    }
+}
+
+impl CompactNode {
+    fn write_binary(self, writer: &mut impl Write) -> Result<()> {
+        write_var_u32(writer, self.id)?;
+        write_u8(writer, self.kind)?;
+        write_opt_u8(writer, self.language)?;
+        write_opt_u32(writer, self.name)?;
+        write_opt_u32(writer, self.qualified_name)?;
+        write_opt_u8(writer, self.symbol_kind)?;
+        write_opt_u32(writer, self.file_id)?;
+        write_opt_span(writer, self.span)?;
+        write_u8(writer, self.provenance)?;
+        write_u8(writer, self.confidence)?;
+        Ok(())
+    }
+
+    fn read_binary(reader: &mut impl Read) -> Result<Self> {
+        Ok(Self {
+            id: read_var_u32(reader, "node id")?,
+            kind: read_u8(reader, "node kind")?,
+            language: read_opt_u8(reader, "node language")?,
+            name: read_opt_u32(reader, "node name")?,
+            qualified_name: read_opt_u32(reader, "qualified name")?,
+            symbol_kind: read_opt_u8(reader, "symbol kind")?,
+            file_id: read_opt_u32(reader, "node file id")?,
+            span: read_opt_span(reader)?,
+            provenance: read_u8(reader, "node provenance")?,
+            confidence: read_u8(reader, "node confidence")?,
+        })
+    }
+}
+
+impl CompactEdge {
+    fn write_binary(self, writer: &mut impl Write) -> Result<()> {
+        write_var_u32(writer, self.id)?;
+        write_u8(writer, self.kind)?;
+        write_var_u32(writer, self.from)?;
+        write_var_u32(writer, self.to)?;
+        write_opt_span(writer, self.span)?;
+        write_u8(writer, self.provenance)?;
+        write_u8(writer, self.confidence)?;
+        Ok(())
+    }
+
+    fn read_binary(reader: &mut impl Read) -> Result<Self> {
+        Ok(Self {
+            id: read_var_u32(reader, "edge id")?,
+            kind: read_u8(reader, "edge kind")?,
+            from: read_var_u32(reader, "edge source")?,
+            to: read_var_u32(reader, "edge target")?,
+            span: read_opt_span(reader)?,
+            provenance: read_u8(reader, "edge provenance")?,
+            confidence: read_u8(reader, "edge confidence")?,
+        })
+    }
+}
+
+impl CompactDiagnostic {
+    fn write_binary(self, writer: &mut impl Write) -> Result<()> {
+        write_u8(writer, self.severity)?;
+        write_var_u32(writer, self.message)?;
+        write_opt_u32(writer, self.file_id)?;
+        write_opt_span(writer, self.span)?;
+        Ok(())
+    }
+
+    fn read_binary(reader: &mut impl Read) -> Result<Self> {
+        Ok(Self {
+            severity: read_u8(reader, "diagnostic severity")?,
+            message: read_var_u32(reader, "diagnostic message")?,
+            file_id: read_opt_u32(reader, "diagnostic file id")?,
+            span: read_opt_span(reader)?,
+        })
+    }
 }
 
 struct CompactDecoder {
@@ -371,195 +494,156 @@ fn expand_span(span: CompactSpan) -> SourceSpan {
     }
 }
 
-fn encode_language(language: Language) -> u8 {
-    match language {
-        Language::C => 0,
-        Language::Cpp => 1,
-        Language::Go => 2,
-        Language::JavaScript => 3,
-        Language::Json => 4,
-        Language::Java => 5,
-        Language::ObjectiveC => 6,
-        Language::TypeScript => 7,
-        Language::Python => 8,
-        Language::Rust => 9,
-        Language::Unknown => 10,
+fn write_string(writer: &mut impl Write, value: &str) -> Result<()> {
+    write_len(writer, value.len(), "string")?;
+    writer.write_all(value.as_bytes())?;
+    Ok(())
+}
+
+fn read_string(reader: &mut impl Read) -> Result<String> {
+    let len = read_var_u32(reader, "string length")?;
+    let mut bytes = vec![0; capacity(len, "string")?];
+    reader.read_exact(&mut bytes)?;
+    String::from_utf8(bytes)
+        .map_err(|error| AciError::Message(format!("partition pack has invalid utf-8: {error}")))
+}
+
+fn write_opt_span(writer: &mut impl Write, span: Option<CompactSpan>) -> Result<()> {
+    match span {
+        Some(span) => {
+            write_u8(writer, 1)?;
+            for value in span {
+                write_var_u32(writer, value)?;
+            }
+        }
+        None => write_u8(writer, 0)?,
+    }
+    Ok(())
+}
+
+fn read_opt_span(reader: &mut impl Read) -> Result<Option<CompactSpan>> {
+    match read_u8(reader, "span presence")? {
+        0 => Ok(None),
+        1 => Ok(Some([
+            read_var_u32(reader, "span byte start")?,
+            read_var_u32(reader, "span byte end")?,
+            read_var_u32(reader, "span start line")?,
+            read_var_u32(reader, "span start column")?,
+            read_var_u32(reader, "span end line")?,
+            read_var_u32(reader, "span end column")?,
+        ])),
+        value => Err(AciError::Message(format!(
+            "partition pack has invalid span presence tag {value}"
+        ))),
     }
 }
 
-fn decode_language(value: u8) -> Result<Language> {
-    match value {
-        0 => Ok(Language::C),
-        1 => Ok(Language::Cpp),
-        2 => Ok(Language::Go),
-        3 => Ok(Language::JavaScript),
-        4 => Ok(Language::Json),
-        5 => Ok(Language::Java),
-        6 => Ok(Language::ObjectiveC),
-        7 => Ok(Language::TypeScript),
-        8 => Ok(Language::Python),
-        9 => Ok(Language::Rust),
-        10 => Ok(Language::Unknown),
-        _ => Err(invalid_tag("language", value)),
+fn write_opt_u32(writer: &mut impl Write, value: Option<u32>) -> Result<()> {
+    write_var_u32(writer, value.map(|value| value + 1).unwrap_or(0))
+}
+
+fn read_opt_u32(reader: &mut impl Read, field: &str) -> Result<Option<u32>> {
+    Ok(match read_var_u32(reader, field)? {
+        0 => None,
+        value => Some(value - 1),
+    })
+}
+
+fn write_opt_u8(writer: &mut impl Write, value: Option<u8>) -> Result<()> {
+    write_u8(writer, value.unwrap_or(u8::MAX))
+}
+
+fn read_opt_u8(reader: &mut impl Read, field: &str) -> Result<Option<u8>> {
+    Ok(match read_u8(reader, field)? {
+        u8::MAX => None,
+        value => Some(value),
+    })
+}
+
+fn write_len(writer: &mut impl Write, len: usize, field: &str) -> Result<()> {
+    let len = u32::try_from(len)
+        .map_err(|_| AciError::Message(format!("partition pack has too many {field}")))?;
+    write_var_u32(writer, len)
+}
+
+fn capacity(len: u32, field: &str) -> Result<usize> {
+    usize::try_from(len).map_err(|_| {
+        AciError::Message(format!(
+            "partition pack {field} length does not fit this platform"
+        ))
+    })
+}
+
+fn write_u8(writer: &mut impl Write, value: u8) -> Result<()> {
+    writer.write_all(&[value])?;
+    Ok(())
+}
+
+fn read_u8(reader: &mut impl Read, field: &str) -> Result<u8> {
+    let mut byte = [0; 1];
+    reader
+        .read_exact(&mut byte)
+        .map_err(|error| truncated(error, field))?;
+    Ok(byte[0])
+}
+
+fn write_var_u32(writer: &mut impl Write, value: u32) -> Result<()> {
+    write_var_u64(writer, u64::from(value))
+}
+
+fn read_var_u32(reader: &mut impl Read, field: &str) -> Result<u32> {
+    let value = read_var_u64_optional(reader)?
+        .ok_or_else(|| AciError::Message(format!("partition pack ended before {field}")))?;
+    u32::try_from(value)
+        .map_err(|_| AciError::Message(format!("partition pack {field} does not fit u32")))
+}
+
+fn write_var_u64(writer: &mut impl Write, mut value: u64) -> Result<()> {
+    while value >= 0x80 {
+        writer.write_all(&[((value as u8) & 0x7f) | 0x80])?;
+        value >>= 7;
+    }
+    writer.write_all(&[value as u8])?;
+    Ok(())
+}
+
+fn read_var_u64(reader: &mut impl Read, field: &str) -> Result<u64> {
+    read_var_u64_optional(reader)?
+        .ok_or_else(|| AciError::Message(format!("partition pack ended before {field}")))
+}
+
+fn read_var_u64_optional(reader: &mut impl Read) -> Result<Option<u64>> {
+    let mut value = 0_u64;
+    let mut shift = 0;
+    loop {
+        let mut byte = [0; 1];
+        match reader.read(&mut byte) {
+            Ok(0) if shift == 0 => return Ok(None),
+            Ok(0) => {
+                return Err(AciError::Message(
+                    "partition pack has truncated varint".to_string(),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) => return Err(error.into()),
+        }
+        value |= u64::from(byte[0] & 0x7f) << shift;
+        if byte[0] & 0x80 == 0 {
+            return Ok(Some(value));
+        }
+        shift += 7;
+        if shift >= 64 {
+            return Err(AciError::Message(
+                "partition pack varint is too large".to_string(),
+            ));
+        }
     }
 }
 
-pub(crate) fn encode_symbol_kind(kind: SymbolKind) -> u8 {
-    match kind {
-        SymbolKind::Function => 0,
-        SymbolKind::Method => 1,
-        SymbolKind::Class => 2,
-        SymbolKind::Interface => 3,
-        SymbolKind::TypeAlias => 4,
-        SymbolKind::Enum => 5,
-        SymbolKind::Variable => 6,
-        SymbolKind::Module => 7,
-        SymbolKind::Field => 8,
-        SymbolKind::Unknown => 9,
+fn truncated(error: std::io::Error, field: &str) -> AciError {
+    if error.kind() == std::io::ErrorKind::UnexpectedEof {
+        AciError::Message(format!("partition pack ended while reading {field}"))
+    } else {
+        error.into()
     }
-}
-
-pub(crate) fn decode_symbol_kind(value: u8) -> Result<SymbolKind> {
-    match value {
-        0 => Ok(SymbolKind::Function),
-        1 => Ok(SymbolKind::Method),
-        2 => Ok(SymbolKind::Class),
-        3 => Ok(SymbolKind::Interface),
-        4 => Ok(SymbolKind::TypeAlias),
-        5 => Ok(SymbolKind::Enum),
-        6 => Ok(SymbolKind::Variable),
-        7 => Ok(SymbolKind::Module),
-        8 => Ok(SymbolKind::Field),
-        9 => Ok(SymbolKind::Unknown),
-        _ => Err(invalid_tag("symbol kind", value)),
-    }
-}
-
-pub(crate) fn encode_provenance(provenance: FactProvenance) -> u8 {
-    match provenance {
-        FactProvenance::StructuralScanner => 0,
-        FactProvenance::TreeSitter => 1,
-        FactProvenance::Scip => 2,
-        FactProvenance::Lsp => 3,
-        FactProvenance::Compiler => 4,
-        FactProvenance::Manual => 5,
-    }
-}
-
-pub(crate) fn decode_provenance(value: u8) -> Result<FactProvenance> {
-    match value {
-        0 => Ok(FactProvenance::StructuralScanner),
-        1 => Ok(FactProvenance::TreeSitter),
-        2 => Ok(FactProvenance::Scip),
-        3 => Ok(FactProvenance::Lsp),
-        4 => Ok(FactProvenance::Compiler),
-        5 => Ok(FactProvenance::Manual),
-        _ => Err(invalid_tag("provenance", value)),
-    }
-}
-
-pub(crate) fn encode_confidence(confidence: Confidence) -> u8 {
-    match confidence {
-        Confidence::Medium => 0,
-        Confidence::Low => 1,
-        Confidence::High => 2,
-        Confidence::Exact => 3,
-    }
-}
-
-pub(crate) fn decode_confidence(value: u8) -> Result<Confidence> {
-    match value {
-        0 => Ok(Confidence::Medium),
-        1 => Ok(Confidence::Low),
-        2 => Ok(Confidence::High),
-        3 => Ok(Confidence::Exact),
-        _ => Err(invalid_tag("confidence", value)),
-    }
-}
-
-fn encode_node_kind(kind: NodeKind) -> u8 {
-    match kind {
-        NodeKind::Repository => 0,
-        NodeKind::Directory => 1,
-        NodeKind::File => 2,
-        NodeKind::Module => 3,
-        NodeKind::Symbol => 4,
-        NodeKind::Import => 5,
-        NodeKind::Export => 6,
-        NodeKind::Package => 7,
-        NodeKind::ExternalSymbol => 8,
-        NodeKind::Span => 9,
-        NodeKind::Chunk => 10,
-    }
-}
-
-fn decode_node_kind(value: u8) -> Result<NodeKind> {
-    match value {
-        0 => Ok(NodeKind::Repository),
-        1 => Ok(NodeKind::Directory),
-        2 => Ok(NodeKind::File),
-        3 => Ok(NodeKind::Module),
-        4 => Ok(NodeKind::Symbol),
-        5 => Ok(NodeKind::Import),
-        6 => Ok(NodeKind::Export),
-        7 => Ok(NodeKind::Package),
-        8 => Ok(NodeKind::ExternalSymbol),
-        9 => Ok(NodeKind::Span),
-        10 => Ok(NodeKind::Chunk),
-        _ => Err(invalid_tag("node kind", value)),
-    }
-}
-
-fn encode_edge_kind(kind: EdgeKind) -> u8 {
-    match kind {
-        EdgeKind::Contains => 0,
-        EdgeKind::Defines => 1,
-        EdgeKind::Imports => 2,
-        EdgeKind::Exports => 3,
-        EdgeKind::Calls => 4,
-        EdgeKind::References => 5,
-        EdgeKind::Extends => 6,
-        EdgeKind::Implements => 7,
-        EdgeKind::Overrides => 8,
-        EdgeKind::DependsOn => 9,
-        EdgeKind::Tests => 10,
-    }
-}
-
-fn decode_edge_kind(value: u8) -> Result<EdgeKind> {
-    match value {
-        0 => Ok(EdgeKind::Contains),
-        1 => Ok(EdgeKind::Defines),
-        2 => Ok(EdgeKind::Imports),
-        3 => Ok(EdgeKind::Exports),
-        4 => Ok(EdgeKind::Calls),
-        5 => Ok(EdgeKind::References),
-        6 => Ok(EdgeKind::Extends),
-        7 => Ok(EdgeKind::Implements),
-        8 => Ok(EdgeKind::Overrides),
-        9 => Ok(EdgeKind::DependsOn),
-        10 => Ok(EdgeKind::Tests),
-        _ => Err(invalid_tag("edge kind", value)),
-    }
-}
-
-fn encode_severity(severity: Severity) -> u8 {
-    match severity {
-        Severity::Info => 0,
-        Severity::Warning => 1,
-        Severity::Error => 2,
-    }
-}
-
-fn decode_severity(value: u8) -> Result<Severity> {
-    match value {
-        0 => Ok(Severity::Info),
-        1 => Ok(Severity::Warning),
-        2 => Ok(Severity::Error),
-        _ => Err(invalid_tag("severity", value)),
-    }
-}
-
-fn invalid_tag(field: &str, value: u8) -> AciError {
-    AciError::Message(format!("compact partition has invalid {field} tag {value}"))
 }

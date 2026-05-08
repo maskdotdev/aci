@@ -1,4 +1,4 @@
-use crate::{SymbolIndexEntry, SymbolIndexKey, compact};
+use crate::{SymbolIndexEntry, SymbolIndexKey, tags};
 use aci_core::{FileId, GraphNode, NodeKind, Result, prefer_fact};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -75,9 +75,9 @@ impl SymbolIndexWriter {
                 file_id: node.file_id.as_ref(),
                 name: node.name.as_deref(),
                 qualified_name: node.qualified_name.as_deref(),
-                symbol_kind: node.symbol_kind.map(compact::encode_symbol_kind),
-                provenance: compact::encode_provenance(node.provenance),
-                confidence: compact::encode_confidence(node.confidence),
+                symbol_kind: node.symbol_kind.map(tags::encode_symbol_kind),
+                provenance: tags::encode_provenance(node.provenance),
+                confidence: tags::encode_confidence(node.confidence),
             },
         )?;
         writeln!(writer.writer)?;
@@ -177,10 +177,10 @@ fn decode_entry(line: &str) -> Result<SymbolIndexEntry> {
         qualified_name: entry.qualified_name,
         symbol_kind: entry
             .symbol_kind
-            .map(compact::decode_symbol_kind)
+            .map(tags::decode_symbol_kind)
             .transpose()?,
-        provenance: compact::decode_provenance(entry.provenance)?,
-        confidence: compact::decode_confidence(entry.confidence)?,
+        provenance: tags::decode_provenance(entry.provenance)?,
+        confidence: tags::decode_confidence(entry.confidence)?,
     })
 }
 

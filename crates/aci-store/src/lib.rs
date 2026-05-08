@@ -1,5 +1,6 @@
 mod compact;
 mod symbols;
+mod tags;
 
 use aci_core::{
     Confidence, EdgeKind, FactProvenance, FileId, GraphEdge, GraphPartition, GraphSnapshot, NodeId,
