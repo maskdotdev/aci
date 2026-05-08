@@ -204,7 +204,7 @@ impl GraphStore {
     fn write_partition_file(&self, partition: &GraphPartition) -> Result<PathBuf> {
         let relative = partition_filename(partition.file_id.as_str());
         let path = self.root.join("partitions").join(&relative);
-        write_json_atomic(&path, partition)?;
+        write_json_atomic_unsynced(&path, partition)?;
         Ok(relative)
     }
 
@@ -388,12 +388,22 @@ fn partition_filename(file_id: &str) -> PathBuf {
 }
 
 fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    write_json_atomic_with_sync(path, value, true)
+}
+
+fn write_json_atomic_unsynced<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    write_json_atomic_with_sync(path, value, false)
+}
+
+fn write_json_atomic_with_sync<T: Serialize>(path: &Path, value: &T, sync: bool) -> Result<()> {
     let tmp = path.with_extension("tmp");
     {
         let mut file = fs::File::create(&tmp)?;
         serde_json::to_writer(&mut file, value)?;
         writeln!(file)?;
-        file.sync_all()?;
+        if sync {
+            file.sync_all()?;
+        }
     }
     fs::rename(tmp, path)?;
     Ok(())
