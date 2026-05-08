@@ -128,7 +128,7 @@ impl PartitionWriter<'_> {
             fs::rename(pack.tmp_path, pack.final_path)?;
         }
         if let Some(symbols) = self.symbols.take() {
-            symbols.finish(&self.store.root)?;
+            symbols.finish()?;
         }
         if let Some(mut manifest_jsonl) = self.manifest_jsonl.take() {
             manifest_jsonl.writer.flush()?;

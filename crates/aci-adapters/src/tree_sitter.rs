@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tree_sitter::{
-    Language as TreeSitterLanguage, Node, Parser, Query, QueryCursor, StreamingIterator, Tree,
+    Language as TreeSitterLanguage, Node, ParseOptions, ParseState, Parser, Query, QueryCursor,
+    QueryCursorOptions, QueryCursorState, StreamingIterator, Tree,
 };
 
 pub const DEFAULT_MAX_FILE_BYTES: usize = 2 * 1024 * 1024;
@@ -126,14 +127,23 @@ impl ParserPool {
         }
 
         let mut parser = self.take_parser()?;
-        #[allow(deprecated)]
-        parser.set_timeout_micros(limits.parse_timeout.as_micros() as u64);
-
         let started = Instant::now();
-        let parsed = parser.parse(source, None);
+        let bytes = source.as_bytes();
+        let len = bytes.len();
+        let mut read = |offset, _| {
+            if offset < len {
+                &bytes[offset..]
+            } else {
+                Default::default()
+            }
+        };
+        let mut should_cancel = |_: &ParseState| timeout_exceeded(started, limits.parse_timeout);
+        let parsed = parser.parse_with_options(
+            &mut read,
+            None,
+            Some(ParseOptions::new().progress_callback(&mut should_cancel)),
+        );
         let parse_time = started.elapsed();
-        #[allow(deprecated)]
-        parser.set_timeout_micros(0);
 
         match parsed {
             Some(tree) => {
@@ -220,9 +230,14 @@ pub fn count_query_captures(
 ) -> Result<usize, String> {
     let mut cursor = QueryCursor::new();
     cursor.set_match_limit(limits.max_query_captures as u32);
-    #[allow(deprecated)]
-    cursor.set_timeout_micros(limits.query_timeout.as_micros() as u64);
-    let mut captures = cursor.captures(query, root, source.as_bytes());
+    let started = Instant::now();
+    let mut should_cancel = |_: &QueryCursorState| timeout_exceeded(started, limits.query_timeout);
+    let mut captures = cursor.captures_with_options(
+        query,
+        root,
+        source.as_bytes(),
+        QueryCursorOptions::new().progress_callback(&mut should_cancel),
+    );
     let mut count = 0_usize;
     while let Some((_capture, _index)) = captures.next() {
         count += 1;
@@ -238,6 +253,10 @@ pub fn count_query_captures(
         return Err("tree-sitter query match limit exceeded".to_string());
     }
     Ok(count)
+}
+
+fn timeout_exceeded(started: Instant, timeout: Duration) -> bool {
+    !timeout.is_zero() && started.elapsed() >= timeout
 }
 
 pub fn node_span(node: Node<'_>) -> SourceSpan {

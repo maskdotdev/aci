@@ -69,14 +69,6 @@ impl DependencyIndexWriter {
         if self.final_root.exists() {
             fs::remove_dir_all(&self.final_root)?;
         }
-        let legacy = self.final_root.with_file_name("deps.tsv");
-        if legacy.exists() {
-            fs::remove_file(legacy)?;
-        }
-        let jsonl_legacy = self.final_root.with_file_name("deps.jsonl");
-        if jsonl_legacy.exists() {
-            fs::remove_file(jsonl_legacy)?;
-        }
         fs::rename(self.tmp_root, self.final_root)?;
         Ok(())
     }

@@ -103,17 +103,13 @@ impl SymbolIndexWriter {
         Ok(())
     }
 
-    pub(crate) fn finish(self, store_root: &Path) -> Result<()> {
+    pub(crate) fn finish(self) -> Result<()> {
         for shard in self.shards.into_values() {
             let mut writer = shard.writer;
             writer.flush()?;
         }
         if self.final_root.exists() {
             fs::remove_dir_all(&self.final_root)?;
-        }
-        let legacy = store_root.join("symbols.jsonl");
-        if legacy.exists() {
-            fs::remove_file(legacy)?;
         }
         fs::rename(self.tmp_root, self.final_root)?;
         Ok(())

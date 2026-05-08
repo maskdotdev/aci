@@ -75,10 +75,8 @@ fn replace_all_writer_loads_from_manifest_without_snapshot() {
     assert_eq!(writer.finish().expect("finish writer"), 1);
 
     assert!(!store.root().join("snapshot.json").exists());
-    assert!(!store.root().join("manifest.json").exists());
     assert!(store.root().join("manifest.jsonl").exists());
     assert!(store.root().join("partitions/pack-00000.bin").exists());
-    assert!(!store.root().join("symbols.jsonl").exists());
     assert!(store.root().join("symbols").is_dir());
     assert!(store.root().join("deps").is_dir());
     assert_eq!(
