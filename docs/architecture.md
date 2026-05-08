@@ -34,6 +34,7 @@ languages/<language>/
     calls.scm
 ```
 
-The current adapters use deterministic line scanners with shared helper
-utilities. The module layout leaves a direct path for Tree-sitter queries without
-changing the graph model.
+The current adapters prefer Tree-sitter extraction for supported languages and
+retain deterministic scanners as bounded fallback paths. The module layout keeps
+parser details behind the adapter boundary so future semantic sources can enrich
+the same graph model.

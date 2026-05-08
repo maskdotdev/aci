@@ -3,10 +3,11 @@ use crate::tree_sitter::{
     ExtractionMode, ParseLimits, ParseSkip, ParserPool, child_by_field_name, node_span, node_text,
 };
 use aci_core::{
-    Confidence, Diagnostic, EdgeKind, FactProvenance, GraphEdge, GraphPartition, NodeId, NodeKind,
-    SourceFile, SymbolKind,
+    Confidence, Diagnostic, FactProvenance, GraphPartition, NodeId, SourceFile, SymbolKind,
 };
-use std::collections::BTreeMap;
+
+mod resolve;
+mod scanner;
 
 pub struct BraceLanguage {
     pub name: &'static str,
@@ -26,12 +27,16 @@ pub struct BraceLanguage {
 
 pub fn extract(file: &SourceFile, pool: &ParserPool, config: &BraceLanguage) -> GraphPartition {
     match ExtractionMode::current() {
-        ExtractionMode::ScannerOnly => scanner_extract(file, config),
+        ExtractionMode::ScannerOnly => scanner::extract(file, config),
         ExtractionMode::TreeSitterOnly => tree_sitter_extract(file, pool, config, false),
         ExtractionMode::TreeSitterWithFallback | ExtractionMode::TreeSitterWithEnrichment => {
             tree_sitter_extract(file, pool, config, true)
         }
     }
+}
+
+pub fn resolve_partition(partition: GraphPartition) -> GraphPartition {
+    resolve::partition(partition)
 }
 
 fn tree_sitter_extract(
@@ -44,7 +49,7 @@ fn tree_sitter_extract(
     let report = match pool.parse(&file.text, &file.file_id, limits) {
         Ok(report) => report,
         Err(skip) if fallback => {
-            let mut partition = scanner_extract(file, config);
+            let mut partition = scanner::extract(file, config);
             partition
                 .diagnostics
                 .push(skip_diagnostic(skip, file, config.name));
@@ -88,68 +93,6 @@ fn tree_sitter_extract(
     let mut partition = resolve_partition(builder.finish());
     partition.metrics.parse_time_micros = report.parse_time.as_micros() as u64;
     partition
-}
-
-fn scanner_extract(file: &SourceFile, _config: &BraceLanguage) -> GraphPartition {
-    let mut builder = PartitionBuilder::new(file);
-    for (line_index, line) in file.text.lines().enumerate() {
-        let trimmed = line.trim();
-        let span = crate::helpers::line_span(&file.text, line_index);
-        if let Some(import) = scanner_import(trimmed) {
-            builder.add_import(import, span.clone());
-        }
-        if let Some(name) = scanner_type_name(trimmed) {
-            builder.add_symbol(name, name, SymbolKind::Class, span.clone());
-        }
-        if let Some(name) = scanner_function_name(trimmed) {
-            builder.add_symbol(name, name, SymbolKind::Function, span);
-        }
-    }
-    resolve_partition(builder.finish())
-}
-
-fn scanner_import(line: &str) -> Option<&str> {
-    if let Some(rest) = line.strip_prefix("#include") {
-        return Some(rest.trim());
-    }
-    if let Some(rest) = line.strip_prefix("import ") {
-        return Some(rest.trim().trim_end_matches(';').trim_matches('"'));
-    }
-    if let Some(rest) = line.strip_prefix("@import ") {
-        return Some(rest.trim().trim_end_matches(';'));
-    }
-    None
-}
-
-fn scanner_type_name(line: &str) -> Option<&str> {
-    for prefix in [
-        "class ",
-        "public class ",
-        "interface ",
-        "public interface ",
-        "struct ",
-        "enum ",
-        "@interface ",
-        "@implementation ",
-        "@protocol ",
-        "type ",
-    ] {
-        if let Some(name) = crate::helpers::first_identifier_after(line, prefix) {
-            return Some(name);
-        }
-    }
-    None
-}
-
-fn scanner_function_name(line: &str) -> Option<&str> {
-    if line.ends_with(';') || !line.contains('(') {
-        return None;
-    }
-    let before_paren = line.split_once('(')?.0.trim_end();
-    before_paren
-        .rsplit(|ch: char| !is_identifier_char(ch))
-        .find(|part| !part.is_empty())
-        .filter(|name| !matches!(*name, "if" | "for" | "while" | "switch" | "return"))
 }
 
 #[derive(Clone)]
@@ -455,48 +398,6 @@ fn callable_leaf(node: tree_sitter::Node<'_>, source: &str) -> Option<String> {
     }
 }
 
-pub fn resolve_partition(mut partition: GraphPartition) -> GraphPartition {
-    let mut local_symbols = BTreeMap::<String, NodeId>::new();
-    let mut external_names = BTreeMap::<NodeId, String>::new();
-    for node in &partition.nodes {
-        match node.kind {
-            NodeKind::Symbol => {
-                if let Some(name) = &node.name {
-                    local_symbols
-                        .entry(name.clone())
-                        .or_insert_with(|| node.id.clone());
-                }
-                if let Some(qualified) = &node.qualified_name {
-                    local_symbols
-                        .entry(qualified.clone())
-                        .or_insert_with(|| node.id.clone());
-                }
-            }
-            NodeKind::ExternalSymbol => {
-                if let Some(name) = node.name.clone() {
-                    external_names.insert(node.id.clone(), name);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    for edge in &mut partition.edges {
-        if !matches!(edge.kind, EdgeKind::Calls | EdgeKind::References) {
-            continue;
-        }
-        let Some(name) = external_names.get(&edge.to) else {
-            continue;
-        };
-        let Some(target) = local_symbols.get(name) else {
-            continue;
-        };
-        *edge = GraphEdge::deterministic(edge.kind, &edge.from, target, edge.span.clone())
-            .with_fact_quality(edge.provenance, edge.confidence);
-    }
-    partition
-}
-
 fn current_scope(scopes: &[Scope]) -> &Scope {
     scopes
         .last()
@@ -513,10 +414,6 @@ fn qualify(parent: &str, name: &str, config: &BraceLanguage) -> String {
 
 fn contains(haystack: &[&str], needle: &str) -> bool {
     haystack.contains(&needle)
-}
-
-fn is_identifier_char(ch: char) -> bool {
-    ch == '_' || ch.is_ascii_alphanumeric()
 }
 
 fn is_keyword(value: &str) -> bool {

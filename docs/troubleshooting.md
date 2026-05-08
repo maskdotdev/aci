@@ -7,7 +7,8 @@ directory, generated, or detected as binary.
 
 ## Missing Symbols
 
-The first adapters are structural scanners. They intentionally recover from
+Adapters prefer Tree-sitter extraction and fall back to structural scanners when
+parsing fails, times out, or exceeds size limits. They intentionally recover from
 partial or invalid source and may miss complex language-specific constructs until
 semantic enrichment is enabled.
 
