@@ -8,6 +8,7 @@ use tree_sitter::{
 };
 
 pub const DEFAULT_MAX_FILE_BYTES: usize = 2 * 1024 * 1024;
+pub const DEFAULT_MAX_PARSE_DIAGNOSTICS: usize = 4;
 pub const DEFAULT_MAX_QUERY_CAPTURES: usize = 100_000;
 pub const DEFAULT_PARSE_TIMEOUT: Duration = Duration::from_millis(250);
 pub const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_millis(250);
@@ -66,6 +67,7 @@ pub fn set_extraction_mode(mode: ExtractionMode) {
 #[derive(Clone, Copy, Debug)]
 pub struct ParseLimits {
     pub max_file_bytes: usize,
+    pub max_parse_diagnostics: usize,
     pub max_query_captures: usize,
     pub parse_timeout: Duration,
     pub query_timeout: Duration,
@@ -75,6 +77,7 @@ impl Default for ParseLimits {
     fn default() -> Self {
         Self {
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_parse_diagnostics: DEFAULT_MAX_PARSE_DIAGNOSTICS,
             max_query_captures: DEFAULT_MAX_QUERY_CAPTURES,
             parse_timeout: DEFAULT_PARSE_TIMEOUT,
             query_timeout: DEFAULT_QUERY_TIMEOUT,
@@ -134,7 +137,12 @@ impl ParserPool {
 
         match parsed {
             Some(tree) => {
-                let diagnostics = parse_diagnostics(tree.root_node(), source, file_id);
+                let diagnostics = parse_diagnostics(
+                    tree.root_node(),
+                    source,
+                    file_id,
+                    limits.max_parse_diagnostics,
+                );
                 self.return_parser(parser);
                 Ok(ParseReport {
                     tree,
@@ -303,12 +311,20 @@ pub fn tsx_language() -> TreeSitterLanguage {
     tree_sitter_typescript::LANGUAGE_TSX.into()
 }
 
-fn parse_diagnostics(root: Node<'_>, source: &str, file_id: &FileId) -> Vec<Diagnostic> {
+fn parse_diagnostics(
+    root: Node<'_>,
+    source: &str,
+    file_id: &FileId,
+    max_diagnostics: usize,
+) -> Vec<Diagnostic> {
     if !root.has_error() {
         return Vec::new();
     }
+    if max_diagnostics == 0 {
+        return Vec::new();
+    }
     let mut diagnostics = Vec::new();
-    collect_error_nodes(root, source, file_id, &mut diagnostics);
+    collect_error_nodes(root, source, file_id, max_diagnostics, &mut diagnostics);
     if diagnostics.is_empty() {
         diagnostics.push(Diagnostic::warning(
             "tree-sitter parsed file with syntax errors",
@@ -323,8 +339,12 @@ fn collect_error_nodes(
     node: Node<'_>,
     source: &str,
     file_id: &FileId,
+    max_diagnostics: usize,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    if diagnostics.len() >= max_diagnostics {
+        return;
+    }
     if node.is_error() || node.is_missing() {
         let label = if node.is_missing() {
             format!("missing {}", node.kind())
@@ -339,8 +359,11 @@ fn collect_error_nodes(
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
+        if diagnostics.len() >= max_diagnostics {
+            break;
+        }
         if child.has_error() || child.is_error() || child.is_missing() {
-            collect_error_nodes(child, source, file_id, diagnostics);
+            collect_error_nodes(child, source, file_id, max_diagnostics, diagnostics);
         }
     }
 }
@@ -396,5 +419,27 @@ mod tests {
             .parse("def main():\n    pass\n", &file_id, limits)
             .expect_err("large input should be skipped");
         assert!(matches!(skip, ParseSkip::TooLarge { .. }));
+    }
+
+    #[test]
+    fn parser_caps_parse_diagnostics() {
+        let pool = ParserPool::new(python_language());
+        let repo = aci_core::RepositoryId::new("repo", &["tree-sitter-diagnostics"]);
+        let file_id = aci_core::FileId::new("file", &[repo.as_str(), "bad.py", "python"]);
+        let limits = ParseLimits {
+            max_parse_diagnostics: 2,
+            ..ParseLimits::default()
+        };
+
+        let report = pool
+            .parse(
+                "def one(:\n    pass\ndef two(:\n    pass\n",
+                &file_id,
+                limits,
+            )
+            .expect("parse with recoverable errors");
+
+        assert!(report.tree.root_node().has_error());
+        assert!(report.diagnostics.len() <= 2);
     }
 }
