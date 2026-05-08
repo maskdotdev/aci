@@ -2,7 +2,7 @@ use aci_core::{EdgeKind, GraphEdge, GraphPartition, GraphSnapshot, NodeId, NodeK
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 const VERSION: u32 = 1;
@@ -28,6 +28,8 @@ pub struct PartitionEntry {
     pub path: PathBuf,
     pub fingerprint: String,
     pub partition_file: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_index: Option<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -50,8 +52,17 @@ pub struct PartitionWriter<'a> {
     store: &'a GraphStore,
     manifest: Manifest,
     delta: Option<fs::File>,
+    pack: Option<PartitionPack>,
     replace_all: bool,
     written: usize,
+}
+
+struct PartitionPack {
+    writer: BufWriter<fs::File>,
+    tmp_path: PathBuf,
+    final_path: PathBuf,
+    manifest_path: PathBuf,
+    next_index: usize,
 }
 
 impl GraphStore {
@@ -79,16 +90,26 @@ impl GraphStore {
                 path: partition.path.clone(),
                 fingerprint: partition.fingerprint.clone(),
                 partition_file: PathBuf::from("partitions").join(relative),
+                record_index: None,
             },
         );
         self.write_manifest(&manifest)
     }
 
     pub fn replace_all_writer(&self) -> Result<PartitionWriter<'_>> {
+        let final_path = self.root.join("partitions").join("pack-00000.jsonl");
+        let tmp_path = final_path.with_extension("jsonl.tmp");
         Ok(PartitionWriter {
             store: self,
             manifest: Manifest::default(),
             delta: None,
+            pack: Some(PartitionPack {
+                writer: BufWriter::new(fs::File::create(&tmp_path)?),
+                tmp_path,
+                final_path,
+                manifest_path: PathBuf::from("partitions").join("pack-00000.jsonl"),
+                next_index: 0,
+            }),
             replace_all: true,
             written: 0,
         })
@@ -104,6 +125,7 @@ impl GraphStore {
                     .append(true)
                     .open(self.root.join("delta.jsonl"))?,
             ),
+            pack: None,
             replace_all: false,
             written: 0,
         })
@@ -167,32 +189,43 @@ impl GraphStore {
     pub fn partition_file_check(&self) -> Result<Vec<String>> {
         let manifest = self.read_manifest()?;
         let mut problems = Vec::new();
+        let mut packed_entries = BTreeMap::<PathBuf, BTreeMap<usize, PartitionEntry>>::new();
         for entry in manifest.partitions.values() {
+            if let Some(record_index) = entry.record_index {
+                packed_entries
+                    .entry(entry.partition_file.clone())
+                    .or_default()
+                    .insert(record_index, entry.clone());
+                continue;
+            }
             let path = self.root.join(&entry.partition_file);
             if !path.exists() {
                 problems.push(format!("partition file {} is missing", path.display()));
                 continue;
             }
             let partition: GraphPartition = read_json(&path)?;
-            if partition.file_id.to_string() != entry.file_id {
+            check_manifest_partition(entry, &partition, &mut problems);
+        }
+        for (partition_file, mut entries) in packed_entries {
+            let path = self.root.join(&partition_file);
+            if !path.exists() {
+                problems.push(format!("partition file {} is missing", path.display()));
+                continue;
+            }
+            let reader = BufReader::new(fs::File::open(path)?);
+            for (record_index, line) in reader.lines().enumerate() {
+                let Some(entry) = entries.remove(&record_index) else {
+                    continue;
+                };
+                let partition: GraphPartition = serde_json::from_str(&line?)?;
+                check_manifest_partition(&entry, &partition, &mut problems);
+            }
+            for (record_index, entry) in entries {
                 problems.push(format!(
-                    "manifest entry {} points to partition {}",
-                    entry.file_id, partition.file_id
+                    "partition {} is missing packed record {}",
+                    entry.file_id, record_index
                 ));
             }
-            if partition.path != entry.path {
-                problems.push(format!(
-                    "partition {} has stale manifest path",
-                    entry.file_id
-                ));
-            }
-            if partition.fingerprint != entry.fingerprint {
-                problems.push(format!(
-                    "partition {} has stale manifest fingerprint",
-                    entry.file_id
-                ));
-            }
-            check_partition_file_integrity(&partition, &mut problems);
         }
         Ok(problems)
     }
@@ -241,9 +274,26 @@ impl GraphStore {
     fn load_partitions_from_manifest(&self) -> Result<GraphSnapshot> {
         let manifest = self.read_manifest()?;
         let mut snapshot = GraphSnapshot::default();
+        let mut packed_entries = BTreeMap::<PathBuf, BTreeSet<usize>>::new();
         for entry in manifest.partitions.values() {
-            let partition: GraphPartition = read_json(&self.root.join(&entry.partition_file))?;
-            snapshot.replace_partition(partition);
+            if let Some(record_index) = entry.record_index {
+                packed_entries
+                    .entry(entry.partition_file.clone())
+                    .or_default()
+                    .insert(record_index);
+            } else {
+                let partition: GraphPartition = read_json(&self.root.join(&entry.partition_file))?;
+                snapshot.replace_partition(partition);
+            }
+        }
+        for (partition_file, entries) in packed_entries {
+            let reader = BufReader::new(fs::File::open(self.root.join(partition_file))?);
+            for (record_index, line) in reader.lines().enumerate() {
+                if entries.contains(&record_index) {
+                    let partition: GraphPartition = serde_json::from_str(&line?)?;
+                    snapshot.replace_partition(partition);
+                }
+            }
         }
         Ok(snapshot)
     }
@@ -251,7 +301,16 @@ impl GraphStore {
 
 impl PartitionWriter<'_> {
     pub fn write(&mut self, partition: &GraphPartition) -> Result<()> {
-        let relative = self.store.write_partition_file(partition)?;
+        let (partition_file, record_index) = if let Some(pack) = &mut self.pack {
+            let record_index = pack.next_index;
+            serde_json::to_writer(&mut pack.writer, partition)?;
+            writeln!(pack.writer)?;
+            pack.next_index += 1;
+            (pack.manifest_path.clone(), Some(record_index))
+        } else {
+            let relative = self.store.write_partition_file(partition)?;
+            (PathBuf::from("partitions").join(relative), None)
+        };
         if let Some(delta) = &mut self.delta {
             serde_json::to_writer(
                 &mut *delta,
@@ -267,14 +326,20 @@ impl PartitionWriter<'_> {
                 file_id: partition.file_id.to_string(),
                 path: partition.path.clone(),
                 fingerprint: partition.fingerprint.clone(),
-                partition_file: PathBuf::from("partitions").join(relative),
+                partition_file,
+                record_index,
             },
         );
         self.written += 1;
         Ok(())
     }
 
-    pub fn finish(self) -> Result<usize> {
+    pub fn finish(mut self) -> Result<usize> {
+        if let Some(mut pack) = self.pack.take() {
+            pack.writer.flush()?;
+            drop(pack.writer);
+            fs::rename(pack.tmp_path, pack.final_path)?;
+        }
         self.store.write_manifest(&self.manifest)?;
         if self.replace_all {
             let snapshot = self.store.root.join("snapshot.json");
@@ -345,6 +410,32 @@ pub fn check_snapshot_integrity(snapshot: &GraphSnapshot) -> Vec<String> {
         }
     }
     problems
+}
+
+fn check_manifest_partition(
+    entry: &PartitionEntry,
+    partition: &GraphPartition,
+    problems: &mut Vec<String>,
+) {
+    if partition.file_id.to_string() != entry.file_id {
+        problems.push(format!(
+            "manifest entry {} points to partition {}",
+            entry.file_id, partition.file_id
+        ));
+    }
+    if partition.path != entry.path {
+        problems.push(format!(
+            "partition {} has stale manifest path",
+            entry.file_id
+        ));
+    }
+    if partition.fingerprint != entry.fingerprint {
+        problems.push(format!(
+            "partition {} has stale manifest fingerprint",
+            entry.file_id
+        ));
+    }
+    check_partition_file_integrity(partition, problems);
 }
 
 fn check_partition_file_integrity(partition: &GraphPartition, problems: &mut Vec<String>) {
@@ -474,6 +565,17 @@ mod tests {
         assert_eq!(writer.finish().expect("finish writer"), 1);
 
         assert!(!store.root().join("snapshot.json").exists());
+        assert!(store.root().join("partitions/pack-00000.jsonl").exists());
+        assert_eq!(
+            store
+                .read_manifest()
+                .expect("manifest")
+                .partitions
+                .values()
+                .next()
+                .and_then(|entry| entry.record_index),
+            Some(0)
+        );
         assert!(store.read_delta_log().expect("read delta").is_empty());
         assert!(
             store
