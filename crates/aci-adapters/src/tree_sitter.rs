@@ -4,15 +4,12 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tree_sitter::{
-    Language as TreeSitterLanguage, Node, ParseOptions, ParseState, Parser, Query, QueryCursor,
-    QueryCursorOptions, QueryCursorState, StreamingIterator, Tree,
+    Language as TreeSitterLanguage, Node, ParseOptions, ParseState, Parser, Query, Tree,
 };
 
 pub const DEFAULT_MAX_FILE_BYTES: usize = 2 * 1024 * 1024;
 pub const DEFAULT_MAX_PARSE_DIAGNOSTICS: usize = 4;
-pub const DEFAULT_MAX_QUERY_CAPTURES: usize = 100_000;
 pub const DEFAULT_PARSE_TIMEOUT: Duration = Duration::from_millis(250);
-pub const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_millis(250);
 static EXTRACTION_MODE_OVERRIDE: AtomicU8 = AtomicU8::new(0);
 static ENV_EXTRACTION_MODE: OnceLock<ExtractionMode> = OnceLock::new();
 
@@ -69,9 +66,7 @@ pub fn set_extraction_mode(mode: ExtractionMode) {
 pub struct ParseLimits {
     pub max_file_bytes: usize,
     pub max_parse_diagnostics: usize,
-    pub max_query_captures: usize,
     pub parse_timeout: Duration,
-    pub query_timeout: Duration,
 }
 
 impl Default for ParseLimits {
@@ -79,9 +74,7 @@ impl Default for ParseLimits {
         Self {
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             max_parse_diagnostics: DEFAULT_MAX_PARSE_DIAGNOSTICS,
-            max_query_captures: DEFAULT_MAX_QUERY_CAPTURES,
             parse_timeout: DEFAULT_PARSE_TIMEOUT,
-            query_timeout: DEFAULT_QUERY_TIMEOUT,
         }
     }
 }
@@ -220,39 +213,6 @@ pub fn validate_queries(
                 .map_err(|error| format!("{}: {error}", source.path.display()))
         })
         .collect()
-}
-
-pub fn count_query_captures(
-    query: &Query,
-    root: Node<'_>,
-    source: &str,
-    limits: ParseLimits,
-) -> Result<usize, String> {
-    let mut cursor = QueryCursor::new();
-    cursor.set_match_limit(limits.max_query_captures as u32);
-    let started = Instant::now();
-    let mut should_cancel = |_: &QueryCursorState| timeout_exceeded(started, limits.query_timeout);
-    let mut captures = cursor.captures_with_options(
-        query,
-        root,
-        source.as_bytes(),
-        QueryCursorOptions::new().progress_callback(&mut should_cancel),
-    );
-    let mut count = 0_usize;
-    while let Some((_capture, _index)) = captures.next() {
-        count += 1;
-        if count > limits.max_query_captures {
-            return Err(format!(
-                "tree-sitter query capture limit exceeded: {count} > {}",
-                limits.max_query_captures
-            ));
-        }
-    }
-    drop(captures);
-    if cursor.did_exceed_match_limit() {
-        return Err("tree-sitter query match limit exceeded".to_string());
-    }
-    Ok(count)
 }
 
 fn timeout_exceeded(started: Instant, timeout: Duration) -> bool {

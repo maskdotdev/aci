@@ -180,7 +180,6 @@ Acceptance criteria:
 - Add limits:
   - per-file parser timeout or byte-size guardrail
   - fallback for very large generated-looking files
-  - query capture count guardrail to avoid pathological files
 
 Acceptance criteria:
 

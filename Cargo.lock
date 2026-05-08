@@ -8,7 +8,6 @@ version = "0.1.0"
 dependencies = [
  "aci-core",
  "serde_json",
- "tempfile",
  "tree-sitter",
  "tree-sitter-c",
  "tree-sitter-cpp",
@@ -34,6 +33,7 @@ dependencies = [
  "aci-watch",
  "anyhow",
  "clap",
+ "serde_json",
 ]
 
 [[package]]
@@ -73,7 +73,6 @@ version = "0.1.0"
 dependencies = [
  "aci-core",
  "aci-store",
- "tempfile",
 ]
 
 [[package]]

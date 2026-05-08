@@ -228,7 +228,6 @@ impl GraphPartition {
 pub struct PartitionMetrics {
     pub parse_time_micros: u64,
     pub extraction_time_micros: u64,
-    pub query_captures: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

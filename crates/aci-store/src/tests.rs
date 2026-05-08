@@ -193,7 +193,6 @@ fn packed_partition_binary_preserves_rich_partition_shape() {
     replacement.metrics = PartitionMetrics {
         parse_time_micros: 11,
         extraction_time_micros: 22,
-        query_captures: 33,
     };
     replacement.nodes[1] = replacement.nodes[1]
         .clone()

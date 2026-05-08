@@ -198,7 +198,7 @@ impl CompactPartition {
             metrics: [
                 partition.metrics.parse_time_micros,
                 partition.metrics.extraction_time_micros,
-                partition.metrics.query_captures,
+                0,
             ],
         }
     }
@@ -237,7 +237,6 @@ impl CompactPartition {
             metrics: PartitionMetrics {
                 parse_time_micros: metrics[0],
                 extraction_time_micros: metrics[1],
-                query_captures: metrics[2],
             },
         })
     }

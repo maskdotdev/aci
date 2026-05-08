@@ -80,6 +80,16 @@ impl QueryEngine {
         selected.into_values().collect()
     }
 
+    pub fn matching_symbols(&self, symbol_name: &str) -> Vec<&GraphNode> {
+        self.symbols()
+            .into_iter()
+            .filter(|node| {
+                node.name.as_deref() == Some(symbol_name)
+                    || node.qualified_name.as_deref() == Some(symbol_name)
+            })
+            .collect()
+    }
+
     pub fn file_dependencies(&self, file: &Path) -> Vec<String> {
         self.partition_for_path(file)
             .map(|partition| {
@@ -180,14 +190,22 @@ impl QueryEngine {
         let mut seen = BTreeSet::new();
         let mut queue = VecDeque::from([(start.clone(), 0_usize)]);
         while let Some((node, depth)) = queue.pop_front() {
-            if !seen.insert(node.clone()) || depth >= max_depth {
+            if depth >= max_depth {
                 continue;
             }
             for edge in self.edges_from(&node, EdgeKind::DependsOn) {
-                queue.push_back((edge.to.clone(), depth + 1));
+                if seen.insert(edge.to.clone()) {
+                    queue.push_back((edge.to.clone(), depth + 1));
+                }
             }
         }
         seen.iter().filter_map(|id| self.nodes.get(id)).collect()
+    }
+
+    pub fn path_for_node(&self, node: &GraphNode) -> Option<&Path> {
+        node.file_id
+            .as_ref()
+            .and_then(|file_id| self.path_for_file(file_id))
     }
 
     fn edges_from(&self, node: &NodeId, kind: EdgeKind) -> Vec<&GraphEdge> {
@@ -299,6 +317,64 @@ mod tests {
         });
         assert_eq!(engine.lookup_symbols(Some("a"), None, None, None), vec![&a]);
         assert_eq!(engine.callees(&a.id), vec![&b]);
+        assert_eq!(engine.matching_symbols("a"), vec![&a]);
+        assert_eq!(engine.path_for_node(&a), Some(Path::new("/repo/app.py")));
+    }
+
+    #[test]
+    fn finds_packages_references_and_dependency_traversal() {
+        let repo = RepositoryId::new("repo", &["query-relationships"]);
+        let file = SourceFile::new(
+            repo.clone(),
+            Path::new("/repo"),
+            PathBuf::from("/repo/app.py"),
+            Language::Python,
+            "import requests\n".to_string(),
+        );
+        let app = GraphNode::deterministic(
+            &repo,
+            Some(&file.file_id),
+            NodeKind::Symbol,
+            Language::Python,
+            Some("app".to_string()),
+            Some("app".to_string()),
+            None,
+        )
+        .with_symbol_kind(SymbolKind::Module);
+        let package = GraphNode::deterministic(
+            &repo,
+            None,
+            NodeKind::Package,
+            Language::Unknown,
+            Some("requests".to_string()),
+            Some("requests".to_string()),
+            None,
+        );
+        let reference = GraphNode::deterministic(
+            &repo,
+            Some(&file.file_id),
+            NodeKind::Symbol,
+            Language::Python,
+            Some("use_app".to_string()),
+            Some("use_app".to_string()),
+            None,
+        )
+        .with_symbol_kind(SymbolKind::Function);
+        let mut partition = GraphPartition::empty(&file);
+        partition.nodes = vec![app.clone(), package.clone(), reference.clone()];
+        partition.edges = vec![
+            GraphEdge::deterministic(EdgeKind::DependsOn, &app.id, &package.id, None),
+            GraphEdge::deterministic(EdgeKind::References, &reference.id, &app.id, None),
+        ];
+
+        let engine = QueryEngine::new(GraphSnapshot {
+            partitions: vec![partition],
+        });
+
+        assert_eq!(engine.package_dependencies(), vec!["requests".to_string()]);
+        assert_eq!(engine.references("app"), vec![&reference]);
+        let dependencies = engine.traverse_dependencies(&app.id, 2);
+        assert_eq!(dependencies, vec![&package]);
     }
 
     #[test]

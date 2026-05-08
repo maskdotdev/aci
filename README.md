@@ -18,7 +18,8 @@ internal graph model.
   facts can coexist.
 - Stores full indexes as compact binary packs with JSONL manifests.
 - Supports incremental replacement of changed files and reverse dependencies.
-- Queries symbols, file dependencies, callers, and impact sets.
+- Queries symbols, dependencies, callers, callees, references, packages, and
+  impact sets.
 - Exports graph data as JSONL, KiteDB-shaped JSONL, SCIP-shaped JSON, and
   LSIF-shaped JSON.
 
@@ -70,16 +71,24 @@ cargo run -p aci-cli -- query symbols
 cargo run -p aci-cli -- query symbols --name main
 cargo run -p aci-cli -- query --pretty symbols --name main
 cargo run -p aci-cli -- query --pretty --color always symbols --name main
+cargo run -p aci-cli -- query --format json symbols --name main
 ```
 
 Symbol queries include jump locations in `path:line:column` form after the
-store is indexed with the current binary. Query and export commands use `.aci`
-by default; pass `--store` only when reading a different store path.
+store is indexed with the current binary. Query commands default to text output;
+use `--format json` before the query subcommand for machine-readable output.
+Query and export commands use `.aci` by default; pass `--store` only when
+reading a different store path.
 
 Query dependencies and impact:
 
 ```sh
 cargo run -p aci-cli -- query deps --file src/lib.rs
+cargo run -p aci-cli -- query packages
+cargo run -p aci-cli -- query callers main
+cargo run -p aci-cli -- query callees main
+cargo run -p aci-cli -- query refs main
+cargo run -p aci-cli -- query deps-tree main --depth 2
 cargo run -p aci-cli -- query impact src/lib.rs
 cargo run -p aci-cli -- query --pretty impact src/lib.rs
 ```

@@ -1,14 +1,15 @@
 use aci_adapters::tree_sitter::{ExtractionMode, set_extraction_mode};
-use aci_core::RepositoryId;
+use aci_core::{GraphNode, RepositoryId, SourceSpan};
 use aci_export::{ExportFormat, export_snapshot, import_scip_enrichment};
 use aci_indexer::{IndexOptions, IndexPipeline, plan_incremental_reindex};
 use aci_query::QueryEngine;
-use aci_store::{GraphStore, check_partition_integrity};
+use aci_store::{GraphStore, SymbolIndexEntry, check_partition_integrity};
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use serde_json::{Value, json};
 use std::fs;
-use std::io::{Cursor, IsTerminal};
-use std::path::PathBuf;
+use std::io::{Cursor, IsTerminal, Write};
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 mod output;
@@ -64,6 +65,8 @@ pub struct QueryArgs {
     pretty: bool,
     #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
     color: ColorChoice,
+    #[arg(long, value_enum, default_value_t = QueryFormat::Text)]
+    format: QueryFormat,
     #[command(subcommand)]
     command: QueryCommand,
 }
@@ -80,6 +83,18 @@ pub enum QueryCommand {
     },
     Callers {
         symbol: String,
+    },
+    Callees {
+        symbol: String,
+    },
+    Refs {
+        symbol: String,
+    },
+    Packages,
+    DepsTree {
+        symbol: String,
+        #[arg(long, default_value_t = 3)]
+        depth: usize,
     },
     Impact {
         files: Vec<PathBuf>,
@@ -149,6 +164,12 @@ pub enum ColorChoice {
     Never,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum QueryFormat {
+    Text,
+    Json,
+}
+
 impl ColorChoice {
     fn enabled(self) -> bool {
         match self {
@@ -213,13 +234,21 @@ pub fn run_query(args: QueryArgs) -> Result<()> {
     let style = TableStyle::new(args.pretty && args.color.enabled());
     match args.command {
         QueryCommand::Symbols { name } => {
-            print_symbols(&store, name.as_deref(), args.pretty, style)?
+            print_symbols(&store, name.as_deref(), args.pretty, style, args.format)?
         }
         QueryCommand::Deps { file } => {
             let engine = QueryEngine::new(store.load_latest()?);
             let file = fs::canonicalize(&file).unwrap_or(file);
             let deps = engine.file_dependencies(&file);
-            if args.pretty {
+            if args.format == QueryFormat::Json {
+                print_query_json(
+                    "deps",
+                    json!({
+                        "file": file,
+                        "dependencies": deps,
+                    }),
+                )?;
+            } else if args.pretty {
                 print_table(
                     &["Dependency"],
                     deps.into_iter().map(|dep| vec![dep]),
@@ -233,25 +262,108 @@ pub fn run_query(args: QueryArgs) -> Result<()> {
         }
         QueryCommand::Callers { symbol } => {
             let engine = QueryEngine::new(store.load_latest()?);
-            let callers = engine
+            let records = engine
                 .callers(&symbol)
                 .into_iter()
-                .map(|node| {
-                    node.qualified_name
-                        .as_deref()
-                        .unwrap_or_default()
-                        .to_string()
-                })
+                .map(|node| node_record(&engine, node))
                 .collect::<Vec<_>>();
-            if args.pretty {
+            if args.format == QueryFormat::Json {
+                print_query_json(
+                    "callers",
+                    Value::Array(records.iter().map(QueryNode::to_json).collect()),
+                )?;
+            } else if args.pretty {
+                let rows = records.iter().map(QueryNode::text_row).collect::<Vec<_>>();
+                print_table(&["Caller", "Kind", "Location"], rows, style);
+            } else {
+                for record in records {
+                    print_node_row(record.text_row());
+                }
+            }
+        }
+        QueryCommand::Callees { symbol } => {
+            let engine = QueryEngine::new(store.load_latest()?);
+            let records = engine
+                .matching_symbols(&symbol)
+                .into_iter()
+                .flat_map(|node| engine.callees(&node.id))
+                .map(|node| node_record(&engine, node))
+                .collect::<Vec<_>>();
+            if args.format == QueryFormat::Json {
+                print_query_json(
+                    "callees",
+                    Value::Array(records.iter().map(QueryNode::to_json).collect()),
+                )?;
+            } else if args.pretty {
+                let rows = records.iter().map(QueryNode::text_row).collect::<Vec<_>>();
+                print_table(&["Callee", "Kind", "Location"], rows, style);
+            } else {
+                for record in records {
+                    print_node_row(record.text_row());
+                }
+            }
+        }
+        QueryCommand::Refs { symbol } => {
+            let engine = QueryEngine::new(store.load_latest()?);
+            let records = engine
+                .references(&symbol)
+                .into_iter()
+                .map(|node| node_record(&engine, node))
+                .collect::<Vec<_>>();
+            if args.format == QueryFormat::Json {
+                print_query_json(
+                    "refs",
+                    Value::Array(records.iter().map(QueryNode::to_json).collect()),
+                )?;
+            } else if args.pretty {
+                let rows = records.iter().map(QueryNode::text_row).collect::<Vec<_>>();
+                print_table(&["Reference", "Kind", "Location"], rows, style);
+            } else {
+                for record in records {
+                    print_node_row(record.text_row());
+                }
+            }
+        }
+        QueryCommand::Packages => {
+            let engine = QueryEngine::new(store.load_latest()?);
+            let packages = engine.package_dependencies();
+            if args.format == QueryFormat::Json {
+                print_query_json("packages", json!(packages))?;
+            } else if args.pretty {
                 print_table(
-                    &["Caller"],
-                    callers.into_iter().map(|caller| vec![caller]),
+                    &["Package"],
+                    packages.into_iter().map(|package| vec![package]),
                     style,
                 );
             } else {
-                for caller in callers {
-                    println!("{caller}");
+                for package in packages {
+                    println!("{package}");
+                }
+            }
+        }
+        QueryCommand::DepsTree { symbol, depth } => {
+            let engine = QueryEngine::new(store.load_latest()?);
+            let records = engine
+                .matching_symbols(&symbol)
+                .into_iter()
+                .flat_map(|node| engine.traverse_dependencies(&node.id, depth))
+                .map(|node| node_record(&engine, node))
+                .collect::<Vec<_>>();
+            if args.format == QueryFormat::Json {
+                print_query_json(
+                    "deps-tree",
+                    json!({
+                        "symbol": symbol,
+                        "depth": depth,
+                        "dependencies": records.iter().map(QueryNode::to_json).collect::<Vec<_>>(),
+                    }),
+                )?;
+            } else if args.pretty {
+                let rows = records.iter().map(QueryNode::text_row).collect::<Vec<_>>();
+                print_table(&["Dependency", "Kind", "Location"], rows, style);
+            } else {
+                for record in records {
+                    print_node_row(record.text_row());
                 }
             }
         }
@@ -262,7 +374,15 @@ pub fn run_query(args: QueryArgs) -> Result<()> {
                 .map(|file| fs::canonicalize(&file).unwrap_or(file))
                 .collect::<Vec<_>>();
             let impacted = engine.impact_from_files(&files);
-            if args.pretty {
+            if args.format == QueryFormat::Json {
+                print_query_json(
+                    "impact",
+                    json!({
+                        "files": files,
+                        "impacted": impacted,
+                    }),
+                )?;
+            } else if args.pretty {
                 print_table(
                     &["Impacted file"],
                     impacted
@@ -378,20 +498,26 @@ fn print_symbols(
     name: Option<&str>,
     pretty: bool,
     style: TableStyle,
+    format: QueryFormat,
 ) -> Result<()> {
     let mut rows = Vec::new();
+    let mut records = Vec::new();
     if let Some(entries) = store.lookup_symbol_index(name)? {
         for entry in entries {
-            rows.push(vec![
-                entry.qualified_name.unwrap_or_default(),
-                entry
-                    .symbol_kind
-                    .map(|kind| format!("{kind:?}"))
-                    .unwrap_or_default(),
-                format_location(entry.path.as_deref(), entry.span.as_ref())
-                    .or_else(|| entry.file_id.map(|file_id| file_id.to_string()))
-                    .unwrap_or_default(),
-            ]);
+            if format == QueryFormat::Json {
+                records.push(symbol_index_entry_json(&entry));
+            } else {
+                rows.push(vec![
+                    entry.qualified_name.unwrap_or_default(),
+                    entry
+                        .symbol_kind
+                        .map(|kind| format!("{kind:?}"))
+                        .unwrap_or_default(),
+                    format_location(entry.path.as_deref(), entry.span.as_ref())
+                        .or_else(|| entry.file_id.map(|file_id| file_id.to_string()))
+                        .unwrap_or_default(),
+                ]);
+            }
         }
     } else {
         let snapshot = store.load_latest()?;
@@ -406,18 +532,24 @@ fn print_symbols(
                 .file_id
                 .as_ref()
                 .and_then(|file_id| file_paths.get(file_id));
-            rows.push(vec![
-                node.qualified_name.clone().unwrap_or_default(),
-                node.symbol_kind
-                    .map(|kind| format!("{kind:?}"))
-                    .unwrap_or_default(),
-                format_location(path.map(PathBuf::as_path), node.span.as_ref())
-                    .or_else(|| node.file_id.as_ref().map(ToString::to_string))
-                    .unwrap_or_default(),
-            ]);
+            if format == QueryFormat::Json {
+                records.push(node_json(node, path.map(PathBuf::as_path)));
+            } else {
+                rows.push(vec![
+                    node.qualified_name.clone().unwrap_or_default(),
+                    node.symbol_kind
+                        .map(|kind| format!("{kind:?}"))
+                        .unwrap_or_default(),
+                    format_location(path.map(PathBuf::as_path), node.span.as_ref())
+                        .or_else(|| node.file_id.as_ref().map(ToString::to_string))
+                        .unwrap_or_default(),
+                ]);
+            }
         }
     }
-    if pretty {
+    if format == QueryFormat::Json {
+        print_query_json("symbols", Value::Array(records))?;
+    } else if pretty {
         print_table(&["Symbol", "Kind", "Location"], rows, style);
     } else {
         for row in rows {
@@ -462,11 +594,108 @@ fn bench_cold(
         "cold_extraction_seconds_per_file={:.9}",
         summary.extraction_time_micros as f64 / 1_000_000.0 / files as f64
     );
-    println!(
-        "cold_query_captures_per_file={:.3}",
-        summary.query_captures as f64 / files as f64
-    );
     Ok(())
+}
+
+#[derive(Clone, Debug)]
+struct QueryNode {
+    value: Value,
+    row: Vec<String>,
+}
+
+impl QueryNode {
+    fn text_row(&self) -> Vec<String> {
+        self.row.clone()
+    }
+
+    fn to_json(&self) -> Value {
+        self.value.clone()
+    }
+}
+
+fn node_record(engine: &QueryEngine, node: &GraphNode) -> QueryNode {
+    let path = engine.path_for_node(node);
+    let name = node
+        .qualified_name
+        .clone()
+        .or_else(|| node.name.clone())
+        .unwrap_or_default();
+    let kind = node
+        .symbol_kind
+        .map(|kind| format!("{kind:?}"))
+        .unwrap_or_else(|| format!("{:?}", node.kind));
+    let location = format_location(path, node.span.as_ref()).unwrap_or_default();
+    QueryNode {
+        value: node_json(node, path),
+        row: vec![name, kind, location],
+    }
+}
+
+fn print_node_row(row: Vec<String>) {
+    println!("{}\t{}\t{}", row[0], row[1], row[2]);
+}
+
+fn print_query_json(query: &str, results: Value) -> Result<()> {
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    serde_json::to_writer_pretty(
+        &mut handle,
+        &json!({
+            "query": query,
+            "results": results,
+        }),
+    )?;
+    writeln!(handle)?;
+    Ok(())
+}
+
+fn symbol_index_entry_json(entry: &SymbolIndexEntry) -> Value {
+    json!({
+        "name": entry.name,
+        "qualified_name": entry.qualified_name,
+        "symbol_kind": entry.symbol_kind,
+        "file_id": entry.file_id.as_ref().map(ToString::to_string),
+        "path": entry.path,
+        "location": format_location(entry.path.as_deref(), entry.span.as_ref()),
+        "span": span_json(entry.span.as_ref()),
+        "provenance": entry.provenance,
+        "confidence": entry.confidence,
+    })
+}
+
+fn node_json(node: &GraphNode, path: Option<&Path>) -> Value {
+    json!({
+        "id": node.id.to_string(),
+        "node_kind": node.kind,
+        "language": node.language,
+        "name": node.name,
+        "qualified_name": node.qualified_name,
+        "symbol_kind": node.symbol_kind,
+        "file_id": node.file_id.as_ref().map(ToString::to_string),
+        "path": path,
+        "location": format_location(path, node.span.as_ref()),
+        "span": span_json(node.span.as_ref()),
+        "provenance": node.provenance,
+        "confidence": node.confidence,
+    })
+}
+
+fn span_json(span: Option<&SourceSpan>) -> Value {
+    span.map(|span| {
+        json!({
+            "byte_start": span.byte_start,
+            "byte_end": span.byte_end,
+            "start": {
+                "line": span.start.line,
+                "column": span.start.column,
+            },
+            "end": {
+                "line": span.end.line,
+                "column": span.end.column,
+            },
+        })
+    })
+    .unwrap_or(Value::Null)
 }
 
 fn bench_query(store: PathBuf, name: String, iterations: usize) -> Result<()> {

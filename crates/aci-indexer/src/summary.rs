@@ -13,7 +13,6 @@ pub struct IndexSummary {
     pub max_edges_per_file: usize,
     pub parse_time_micros: u64,
     pub extraction_time_micros: u64,
-    pub query_captures: u64,
 }
 
 impl From<GraphPartition> for IndexSummary {
@@ -31,7 +30,6 @@ impl From<GraphPartition> for IndexSummary {
             max_edges_per_file: partition.edges.len(),
             parse_time_micros: partition.metrics.parse_time_micros,
             extraction_time_micros: partition.metrics.extraction_time_micros,
-            query_captures: partition.metrics.query_captures,
         }
     }
 }
@@ -46,7 +44,6 @@ impl IndexSummary {
         self.max_edges_per_file = self.max_edges_per_file.max(partition.edges.len());
         self.parse_time_micros += partition.metrics.parse_time_micros;
         self.extraction_time_micros += partition.metrics.extraction_time_micros;
-        self.query_captures += partition.metrics.query_captures;
         *self.language_counts.entry(partition.language).or_insert(0) += 1;
     }
 
@@ -60,7 +57,6 @@ impl IndexSummary {
         self.max_edges_per_file = self.max_edges_per_file.max(other.max_edges_per_file);
         self.parse_time_micros += other.parse_time_micros;
         self.extraction_time_micros += other.extraction_time_micros;
-        self.query_captures += other.query_captures;
         for (language, count) in other.language_counts {
             *self.language_counts.entry(language).or_insert(0) += count;
         }
