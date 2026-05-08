@@ -395,13 +395,21 @@ impl PartitionWriter<'_> {
             serde_json::to_writer(&mut manifest_jsonl.writer, &entry)?;
             writeln!(manifest_jsonl.writer)?;
         }
-        if let Some(symbols) = &mut self.symbols {
+        let mut import_stems = self.dependencies.as_ref().map(|_| Vec::new());
+        if self.symbols.is_some() || import_stems.is_some() {
             for node in &partition.nodes {
-                symbols.write_node(node)?;
+                if let Some(symbols) = &mut self.symbols {
+                    symbols.write_node(node)?;
+                }
+                if let Some(import_stems) = &mut import_stems
+                    && let Some(stem) = dependencies::import_stem_for_node(node)
+                {
+                    import_stems.push(stem);
+                }
             }
         }
         if let Some(dependencies) = &mut self.dependencies {
-            dependencies.write_partition(partition)?;
+            dependencies.write_partition_imports(partition, import_stems.unwrap_or_default())?;
         }
         self.written += 1;
         Ok(())

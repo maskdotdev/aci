@@ -1,4 +1,4 @@
-use aci_core::{GraphPartition, NodeKind, Result};
+use aci_core::{GraphNode, GraphPartition, NodeKind, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -44,8 +44,18 @@ impl DependencyIndexWriter {
         Ok(writer)
     }
 
-    pub(crate) fn write_partition(&mut self, partition: &GraphPartition) -> Result<()> {
-        self.write_entry(&DependencyIndexEntry::from_partition(partition))
+    pub(crate) fn write_partition_imports(
+        &mut self,
+        partition: &GraphPartition,
+        mut import_stems: Vec<String>,
+    ) -> Result<()> {
+        import_stems.sort();
+        import_stems.dedup();
+        self.write_entry(&DependencyIndexEntry {
+            file_id: partition.file_id.to_string(),
+            path: partition.path.clone(),
+            import_stems,
+        })
     }
 
     pub(crate) fn finish(mut self) -> Result<()> {
@@ -60,6 +70,17 @@ impl DependencyIndexWriter {
         writeln!(self.writer)?;
         Ok(())
     }
+}
+
+pub(crate) fn import_stem_for_node(node: &GraphNode) -> Option<String> {
+    if node.kind != NodeKind::Import {
+        return None;
+    }
+    node.qualified_name
+        .as_deref()
+        .or(node.name.as_deref())
+        .and_then(module_stem)
+        .map(str::to_string)
 }
 
 pub(crate) fn plan(root: &Path, changed_paths: &[PathBuf]) -> Result<Option<StoreIncrementalPlan>> {
@@ -113,26 +134,6 @@ fn read(root: &Path) -> Result<Vec<DependencyIndexEntry>> {
         entries.insert(entry.file_id.clone(), entry);
     }
     Ok(entries.into_values().collect())
-}
-
-impl DependencyIndexEntry {
-    fn from_partition(partition: &GraphPartition) -> Self {
-        let import_stems = partition
-            .nodes
-            .iter()
-            .filter(|node| node.kind == NodeKind::Import)
-            .filter_map(|node| node.qualified_name.as_deref().or(node.name.as_deref()))
-            .filter_map(module_stem)
-            .map(str::to_string)
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        Self {
-            file_id: partition.file_id.to_string(),
-            path: partition.path.clone(),
-            import_stems,
-        }
-    }
 }
 
 fn module_stem(module: &str) -> Option<&str> {
