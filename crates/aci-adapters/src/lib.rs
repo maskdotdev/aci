@@ -289,6 +289,32 @@ mod tests {
     }
 
     #[test]
+    fn brace_adapters_skip_local_variable_symbols() {
+        let repo = RepositoryId::new("repo", &["brace-local-fixture"]);
+        let file = SourceFile::new(
+            repo,
+            Path::new("."),
+            PathBuf::from("fixtures/cpp/coverage.cpp"),
+            Language::Cpp,
+            include_str!("../fixtures/cpp/coverage.cpp").to_string(),
+        );
+        let partition = languages::cpp::extract_cpp(&file);
+
+        assert!(
+            !partition
+                .nodes
+                .iter()
+                .any(|node| node.name.as_deref() == Some("widget"))
+        );
+        assert!(
+            partition
+                .edges
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::Calls)
+        );
+    }
+
+    #[test]
     fn tree_sitter_queries_compile_for_supported_grammars() {
         let python = tree_sitter::python_language();
         tree_sitter::validate_queries(

@@ -344,6 +344,12 @@ fn add_variable(
     scopes: &[Scope],
     config: &BraceLanguage,
 ) {
+    if matches!(
+        current_scope(scopes).kind,
+        SymbolKind::Function | SymbolKind::Method
+    ) {
+        return;
+    }
     for identifier in identifiers(node) {
         if let Some(name) = node_text(identifier, source)
             && !is_keyword(name)
