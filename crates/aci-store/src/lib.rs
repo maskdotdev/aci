@@ -46,6 +46,14 @@ pub struct GraphStore {
     root: PathBuf,
 }
 
+pub struct PartitionWriter<'a> {
+    store: &'a GraphStore,
+    manifest: Manifest,
+    delta: Option<fs::File>,
+    replace_all: bool,
+    written: usize,
+}
+
 impl GraphStore {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
@@ -76,32 +84,37 @@ impl GraphStore {
         self.write_manifest(&manifest)
     }
 
+    pub fn replace_all_writer(&self) -> Result<PartitionWriter<'_>> {
+        Ok(PartitionWriter {
+            store: self,
+            manifest: Manifest::default(),
+            delta: None,
+            replace_all: true,
+            written: 0,
+        })
+    }
+
+    pub fn replace_partitions_writer(&self) -> Result<PartitionWriter<'_>> {
+        Ok(PartitionWriter {
+            store: self,
+            manifest: self.read_manifest().unwrap_or_default(),
+            delta: Some(
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(self.root.join("delta.jsonl"))?,
+            ),
+            replace_all: false,
+            written: 0,
+        })
+    }
+
     pub fn replace_partitions(&self, partitions: &[GraphPartition]) -> Result<()> {
-        let mut manifest = self.read_manifest().unwrap_or_default();
-        let mut delta = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.root.join("delta.jsonl"))?;
+        let mut writer = self.replace_partitions_writer()?;
         for partition in partitions {
-            let relative = self.write_partition_file(partition)?;
-            serde_json::to_writer(
-                &mut delta,
-                &DeltaRecord::ReplacePartition {
-                    partition: partition.clone(),
-                },
-            )?;
-            writeln!(delta)?;
-            manifest.partitions.insert(
-                partition.file_id.to_string(),
-                PartitionEntry {
-                    file_id: partition.file_id.to_string(),
-                    path: partition.path.clone(),
-                    fingerprint: partition.fingerprint.clone(),
-                    partition_file: PathBuf::from("partitions").join(relative),
-                },
-            );
+            writer.write(partition)?;
         }
-        self.write_manifest(&manifest)
+        writer.finish().map(|_| ())
     }
 
     pub fn compact(&self) -> Result<GraphSnapshot> {
@@ -149,6 +162,39 @@ impl GraphStore {
     pub fn integrity_check(&self) -> Result<Vec<String>> {
         let snapshot = self.load_latest()?;
         Ok(check_snapshot_integrity(&snapshot))
+    }
+
+    pub fn partition_file_check(&self) -> Result<Vec<String>> {
+        let manifest = self.read_manifest()?;
+        let mut problems = Vec::new();
+        for entry in manifest.partitions.values() {
+            let path = self.root.join(&entry.partition_file);
+            if !path.exists() {
+                problems.push(format!("partition file {} is missing", path.display()));
+                continue;
+            }
+            let partition: GraphPartition = read_json(&path)?;
+            if partition.file_id.to_string() != entry.file_id {
+                problems.push(format!(
+                    "manifest entry {} points to partition {}",
+                    entry.file_id, partition.file_id
+                ));
+            }
+            if partition.path != entry.path {
+                problems.push(format!(
+                    "partition {} has stale manifest path",
+                    entry.file_id
+                ));
+            }
+            if partition.fingerprint != entry.fingerprint {
+                problems.push(format!(
+                    "partition {} has stale manifest fingerprint",
+                    entry.file_id
+                ));
+            }
+            check_partition_file_integrity(&partition, &mut problems);
+        }
+        Ok(problems)
     }
 
     fn write_manifest(&self, manifest: &Manifest) -> Result<()> {
@@ -200,6 +246,44 @@ impl GraphStore {
             snapshot.replace_partition(partition);
         }
         Ok(snapshot)
+    }
+}
+
+impl PartitionWriter<'_> {
+    pub fn write(&mut self, partition: &GraphPartition) -> Result<()> {
+        let relative = self.store.write_partition_file(partition)?;
+        if let Some(delta) = &mut self.delta {
+            serde_json::to_writer(
+                &mut *delta,
+                &DeltaRecord::ReplacePartition {
+                    partition: partition.clone(),
+                },
+            )?;
+            writeln!(delta)?;
+        }
+        self.manifest.partitions.insert(
+            partition.file_id.to_string(),
+            PartitionEntry {
+                file_id: partition.file_id.to_string(),
+                path: partition.path.clone(),
+                fingerprint: partition.fingerprint.clone(),
+                partition_file: PathBuf::from("partitions").join(relative),
+            },
+        );
+        self.written += 1;
+        Ok(())
+    }
+
+    pub fn finish(self) -> Result<usize> {
+        self.store.write_manifest(&self.manifest)?;
+        if self.replace_all {
+            let snapshot = self.store.root.join("snapshot.json");
+            if snapshot.exists() {
+                fs::remove_file(snapshot)?;
+            }
+            fs::File::create(self.store.root.join("delta.jsonl"))?;
+        }
+        Ok(self.written)
     }
 }
 
@@ -261,6 +345,30 @@ pub fn check_snapshot_integrity(snapshot: &GraphSnapshot) -> Vec<String> {
         }
     }
     problems
+}
+
+fn check_partition_file_integrity(partition: &GraphPartition, problems: &mut Vec<String>) {
+    for node in &partition.nodes {
+        if node.kind == NodeKind::Symbol && node.file_id.is_none() {
+            problems.push(format!("symbol {} has no file", node.id));
+        }
+        if let Some(file_id) = &node.file_id
+            && file_id != &partition.file_id
+        {
+            problems.push(format!(
+                "node {} belongs to file {} but is stored in partition {}",
+                node.id, file_id, partition.file_id
+            ));
+        }
+        if let Some(span) = &node.span {
+            validate_span(problems, &format!("node {}", node.id), span);
+        }
+    }
+    for edge in &partition.edges {
+        if let Some(span) = &edge.span {
+            validate_span(problems, &format!("edge {}", edge.id), span);
+        }
+    }
 }
 
 fn validate_span(problems: &mut Vec<String>, owner: &str, span: &aci_core::SourceSpan) {
@@ -336,6 +444,33 @@ mod tests {
             .write_partition(&replacement)
             .expect("write replacement");
 
+        let latest = store.load_latest().expect("load latest");
+        assert_eq!(latest.partitions.len(), 1);
+        assert_eq!(latest.partitions[0].fingerprint, replacement.fingerprint);
+    }
+
+    #[test]
+    fn replace_all_writer_loads_from_manifest_without_snapshot() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = GraphStore::open(dir.path()).expect("open store");
+        store
+            .write_partition(&partition("stale"))
+            .expect("write stale");
+        store.compact().expect("compact stale snapshot");
+
+        let replacement = partition("fresh");
+        let mut writer = store.replace_all_writer().expect("open writer");
+        writer.write(&replacement).expect("write replacement");
+        assert_eq!(writer.finish().expect("finish writer"), 1);
+
+        assert!(!store.root().join("snapshot.json").exists());
+        assert!(store.read_delta_log().expect("read delta").is_empty());
+        assert!(
+            store
+                .partition_file_check()
+                .expect("partition file check")
+                .is_empty()
+        );
         let latest = store.load_latest().expect("load latest");
         assert_eq!(latest.partitions.len(), 1);
         assert_eq!(latest.partitions[0].fingerprint, replacement.fingerprint);

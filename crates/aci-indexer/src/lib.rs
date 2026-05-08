@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 use std::time::Instant;
 
 #[derive(Clone, Debug)]
@@ -135,6 +136,62 @@ impl IndexPipeline {
         }))
     }
 
+    pub fn stream_path<F>(&self, options: IndexOptions, mut on_partition: F) -> Result<IndexSummary>
+    where
+        F: FnMut(&GraphPartition) -> Result<()>,
+    {
+        let root = options.root.canonicalize()?;
+        let repo_id = RepositoryId::new("repo", &[root.to_string_lossy().as_ref()]);
+        let candidates = discover_files(&root)?;
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(options.workers.max(1))
+            .build()
+            .map_err(|error| aci_core::AciError::Message(error.to_string()))?;
+        let (tx, rx) = mpsc::sync_channel(options.workers.max(1) * 2);
+        let mut summary = IndexSummary::default();
+        let mut sink_error = None;
+
+        let producer_result = std::thread::scope(|scope| {
+            let producer = scope.spawn(|| {
+                pool.install(|| {
+                    candidates.par_iter().try_for_each_with(tx, |tx, path| {
+                        tx.send(self.index_file(&repo_id, &root, path))
+                            .map_err(|_| {
+                                aci_core::AciError::Message(
+                                    "index stream receiver closed".to_string(),
+                                )
+                            })
+                    })
+                })
+            });
+
+            while let Ok(item) = rx.recv() {
+                match item {
+                    Ok(Some(partition)) => {
+                        if let Err(error) = on_partition(&partition) {
+                            sink_error = Some(error);
+                            break;
+                        }
+                        summary.merge_partition(&partition);
+                    }
+                    Ok(None) => {}
+                    Err(FileSkip::Skipped(_)) => summary.skipped_files += 1,
+                    Err(FileSkip::Diagnostic(_)) => summary.diagnostics += 1,
+                }
+            }
+            drop(rx);
+            producer
+                .join()
+                .map_err(|_| aci_core::AciError::Message("index producer panicked".to_string()))?
+        });
+
+        if let Some(error) = sink_error {
+            return Err(error);
+        }
+        producer_result?;
+        Ok(summary)
+    }
+
     pub fn index_changed_paths(
         &self,
         root: &Path,
@@ -215,6 +272,17 @@ impl From<GraphPartition> for IndexSummary {
 }
 
 impl IndexSummary {
+    fn merge_partition(&mut self, partition: &GraphPartition) {
+        self.indexed_files += 1;
+        self.diagnostics += partition.diagnostics.len();
+        self.nodes += partition.nodes.len();
+        self.edges += partition.edges.len();
+        self.parse_time_micros += partition.metrics.parse_time_micros;
+        self.extraction_time_micros += partition.metrics.extraction_time_micros;
+        self.query_captures += partition.metrics.query_captures;
+        *self.language_counts.entry(partition.language).or_insert(0) += 1;
+    }
+
     fn merge(mut self, other: Self) -> Self {
         self.indexed_files += other.indexed_files;
         self.skipped_files += other.skipped_files;
@@ -409,6 +477,26 @@ mod tests {
         assert_eq!(summary.language_counts.get(&Language::Python), Some(&1));
         assert!(summary.nodes > 0);
         assert!(summary.edges > 0);
+    }
+
+    #[test]
+    fn streams_partitions_to_sink() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("app.ts"), "export function main() {}\n").expect("write ts");
+        fs::write(dir.path().join("tool.py"), "def build():\n    return 1\n").expect("write py");
+        let mut paths = Vec::new();
+
+        let summary = IndexPipeline::default()
+            .stream_path(IndexOptions::new(dir.path()), |partition| {
+                paths.push(partition.path.clone());
+                Ok(())
+            })
+            .expect("stream fixture");
+
+        assert_eq!(summary.indexed_files, 2);
+        assert_eq!(paths.len(), 2);
+        assert!(paths.iter().any(|path| path.ends_with("app.ts")));
+        assert!(paths.iter().any(|path| path.ends_with("tool.py")));
     }
 
     #[test]

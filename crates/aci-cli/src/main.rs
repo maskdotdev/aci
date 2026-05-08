@@ -147,20 +147,19 @@ fn index(args: IndexArgs) -> Result<()> {
     }
     let pipeline = IndexPipeline::default();
     let store = GraphStore::open(args.store)?;
-    let mut should_compact = true;
+    let mut full_index = false;
     if args.changed.is_empty() {
-        let report = pipeline
-            .index_path(options)
+        full_index = true;
+        let mut writer = store.replace_all_writer()?;
+        let summary = pipeline
+            .stream_path(options, |partition| writer.write(partition))
             .with_context(|| format!("indexing {}", args.path.display()))?;
-        store.replace_partitions(&report.partitions)?;
+        writer.finish()?;
         println!(
             "indexed {} files, skipped {}, diagnostics {}",
-            report.partitions.len(),
-            report.skipped.len(),
-            report.diagnostics.len()
+            summary.indexed_files, summary.skipped_files, summary.diagnostics
         );
     } else {
-        should_compact = false;
         let root = fs::canonicalize(&args.path)
             .with_context(|| format!("canonicalizing {}", args.path.display()))?;
         let changed = args
@@ -180,10 +179,11 @@ fn index(args: IndexArgs) -> Result<()> {
             plan.reverse_dependencies.len()
         );
     }
-    if should_compact {
-        store.compact()?;
-    }
-    let integrity = store.integrity_check()?;
+    let integrity = if full_index {
+        store.partition_file_check()?
+    } else {
+        store.integrity_check()?
+    };
     for problem in integrity {
         eprintln!("integrity: {problem}");
     }
