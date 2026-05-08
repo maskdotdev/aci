@@ -4,7 +4,7 @@ use aci_core::{
     Severity, SourceSpan, SymbolKind,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -36,8 +36,8 @@ struct CompactNode {
     id: u32,
     #[serde(rename = "k")]
     kind: NodeKind,
-    #[serde(rename = "l")]
-    language: Language,
+    #[serde(rename = "l", skip_serializing_if = "Option::is_none")]
+    language: Option<Language>,
     #[serde(rename = "n", skip_serializing_if = "Option::is_none")]
     name: Option<u32>,
     #[serde(rename = "q", skip_serializing_if = "Option::is_none")]
@@ -48,9 +48,9 @@ struct CompactNode {
     file_id: Option<u32>,
     #[serde(rename = "s", skip_serializing_if = "Option::is_none")]
     span: Option<CompactSpan>,
-    #[serde(rename = "p")]
+    #[serde(rename = "p", default, skip_serializing_if = "is_default_provenance")]
     provenance: FactProvenance,
-    #[serde(rename = "c")]
+    #[serde(rename = "c", default, skip_serializing_if = "is_default_confidence")]
     confidence: Confidence,
 }
 
@@ -66,9 +66,9 @@ struct CompactEdge {
     to: u32,
     #[serde(rename = "s", skip_serializing_if = "Option::is_none")]
     span: Option<CompactSpan>,
-    #[serde(rename = "p")]
+    #[serde(rename = "p", default, skip_serializing_if = "is_default_provenance")]
     provenance: FactProvenance,
-    #[serde(rename = "c")]
+    #[serde(rename = "c", default, skip_serializing_if = "is_default_confidence")]
     confidence: Confidence,
 }
 
@@ -89,7 +89,7 @@ type CompactSpan = [u32; 6];
 #[derive(Default)]
 struct StringTable {
     values: Vec<String>,
-    indexes: BTreeMap<String, u32>,
+    indexes: HashMap<String, u32>,
 }
 
 impl StringTable {
@@ -129,7 +129,7 @@ impl CompactPartition {
             .map(|node| CompactNode {
                 id: strings.intern(node.id.as_str()),
                 kind: node.kind,
-                language: node.language,
+                language: (node.language != partition.language).then_some(node.language),
                 name: intern_option(&mut strings, node.name.as_deref()),
                 qualified_name: intern_option(&mut strings, node.qualified_name.as_deref()),
                 symbol_kind: node.symbol_kind,
@@ -197,7 +197,7 @@ impl CompactPartition {
             diagnostics,
             metrics,
         } = self;
-        let decoder = CompactDecoder { strings };
+        let decoder = CompactDecoder { strings, language };
         Ok(GraphPartition {
             file_id: FileId::from_raw(decoder.string(file_id, "file id")?),
             path: PathBuf::from(decoder.string(path, "path")?),
@@ -226,6 +226,7 @@ impl CompactPartition {
 
 struct CompactDecoder {
     strings: Vec<String>,
+    language: Language,
 }
 
 impl CompactDecoder {
@@ -233,7 +234,7 @@ impl CompactDecoder {
         Ok(GraphNode {
             id: NodeId::from_raw(self.string(node.id, "node id")?),
             kind: node.kind,
-            language: node.language,
+            language: node.language.unwrap_or(self.language),
             name: self.optional_string(node.name, "node name")?,
             qualified_name: self.optional_string(node.qualified_name, "qualified name")?,
             symbol_kind: node.symbol_kind,
@@ -311,4 +312,12 @@ fn expand_span(span: CompactSpan) -> SourceSpan {
             column: span[5],
         },
     }
+}
+
+fn is_default_provenance(provenance: &FactProvenance) -> bool {
+    *provenance == FactProvenance::default()
+}
+
+fn is_default_confidence(confidence: &Confidence) -> bool {
+    *confidence == Confidence::default()
 }
