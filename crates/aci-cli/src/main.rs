@@ -184,7 +184,9 @@ fn index(args: IndexArgs) -> Result<()> {
         for partition in &partitions {
             integrity.extend(check_partition_integrity(partition));
         }
-        store.replace_partitions(&partitions)?;
+        if !partitions.is_empty() {
+            store.replace_partitions(&partitions)?;
+        }
         println!(
             "re-indexed {} changed/dependent files ({} direct, {} reverse dependencies)",
             partitions.len(),
