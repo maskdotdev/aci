@@ -16,5 +16,6 @@ aci-export.workspace = true
 aci-indexer.workspace = true
 aci-query.workspace = true
 aci-store.workspace = true
+aci-watch.workspace = true
 anyhow.workspace = true
 clap.workspace = true

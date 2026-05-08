@@ -12,8 +12,10 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 mod output;
+mod watch;
 
 use output::{TableStyle, format_location, print_table};
+use watch::{WatchArgs, run_watch};
 
 #[derive(Parser)]
 #[command(name = "aci", about = "Index and query code graphs")]
@@ -29,6 +31,7 @@ impl Cli {
             Command::Query(args) => run_query(args),
             Command::Export(args) => run_export(args),
             Command::Bench(args) => run_bench(args),
+            Command::Watch(args) => run_watch(args),
         }
     }
 }
@@ -39,6 +42,7 @@ enum Command {
     Query(QueryArgs),
     Export(ExportArgs),
     Bench(BenchArgs),
+    Watch(WatchArgs),
 }
 
 #[derive(Args)]
@@ -167,55 +171,37 @@ impl BenchExtractionVariant {
 }
 
 pub fn run_index(args: IndexArgs) -> Result<()> {
-    let mut options = IndexOptions::new(&args.path);
-    if let Some(workers) = args.workers {
+    run_index_command(args.path, args.store, args.workers, args.changed)
+}
+
+pub(crate) fn run_index_command(
+    path: PathBuf,
+    store: PathBuf,
+    workers: Option<usize>,
+    changed: Vec<PathBuf>,
+) -> Result<()> {
+    let mut options = IndexOptions::new(&path);
+    if let Some(workers) = workers {
         options.workers = workers;
     }
     let pipeline = IndexPipeline::default();
-    let store = GraphStore::open(args.store)?;
-    let mut integrity = Vec::new();
-    if args.changed.is_empty() {
+    let store = GraphStore::open(store)?;
+    let integrity = if changed.is_empty() {
         let mut writer = store.replace_all_writer()?;
         let summary = pipeline
             .stream_path(options, |partition| writer.write(partition))
-            .with_context(|| format!("indexing {}", args.path.display()))?;
+            .with_context(|| format!("indexing {}", path.display()))?;
         writer.finish()?;
         println!(
             "indexed {} files, skipped {}, diagnostics {}",
             summary.indexed_files, summary.skipped_files, summary.diagnostics
         );
-        integrity = store.partition_file_check()?;
+        store.partition_file_check()?
     } else {
-        let root = fs::canonicalize(&args.path)
-            .with_context(|| format!("canonicalizing {}", args.path.display()))?;
-        let changed = normalize_changed_paths(&root, &args.changed, &pipeline);
-        let plan = match store.plan_incremental_reindex(&changed)? {
-            Some(plan) => plan,
-            None => {
-                let snapshot = store.load_latest().unwrap_or_default();
-                let plan = plan_incremental_reindex(&snapshot, &changed);
-                aci_store::StoreIncrementalPlan {
-                    changed_files: plan.changed_files,
-                    reverse_dependencies: plan.reverse_dependencies,
-                    files_to_reindex: plan.files_to_reindex,
-                }
-            }
-        };
-        let partitions =
-            pipeline.index_changed_paths(&root, &plan.files_to_reindex, options.workers)?;
-        for partition in &partitions {
-            integrity.extend(check_partition_integrity(partition));
-        }
-        if !partitions.is_empty() {
-            store.replace_partitions(&partitions)?;
-        }
-        println!(
-            "re-indexed {} changed/dependent files ({} direct, {} reverse dependencies)",
-            partitions.len(),
-            plan.changed_files.len(),
-            plan.reverse_dependencies.len()
-        );
-    }
+        let root = fs::canonicalize(&path)
+            .with_context(|| format!("canonicalizing {}", path.display()))?;
+        reindex_changed(&store, &pipeline, &root, options.workers, &changed, None)?
+    };
     for problem in integrity {
         eprintln!("integrity: {problem}");
     }
@@ -330,7 +316,7 @@ pub fn run_bench(args: BenchArgs) -> Result<()> {
     }
 }
 
-fn normalize_changed_paths(
+pub(crate) fn normalize_changed_paths(
     root: &std::path::Path,
     changed: &[PathBuf],
     pipeline: &IndexPipeline,
@@ -340,6 +326,51 @@ fn normalize_changed_paths(
         .map(|path| fs::canonicalize(path).unwrap_or_else(|_| root.join(path)))
         .filter(|path| pipeline.path_candidate(path))
         .collect()
+}
+
+pub(crate) fn reindex_changed(
+    store: &GraphStore,
+    pipeline: &IndexPipeline,
+    root: &std::path::Path,
+    workers: usize,
+    changed: &[PathBuf],
+    ignored_root: Option<&std::path::Path>,
+) -> Result<Vec<String>> {
+    let mut changed = normalize_changed_paths(root, changed, pipeline);
+    if let Some(ignored_root) = ignored_root {
+        changed.retain(|path| !path.starts_with(ignored_root));
+    }
+    if changed.is_empty() {
+        println!("re-indexed 0 changed/dependent files (0 direct, 0 reverse dependencies)");
+        return Ok(Vec::new());
+    }
+    let plan = match store.plan_incremental_reindex(&changed)? {
+        Some(plan) => plan,
+        None => {
+            let snapshot = store.load_latest().unwrap_or_default();
+            let plan = plan_incremental_reindex(&snapshot, &changed);
+            aci_store::StoreIncrementalPlan {
+                changed_files: plan.changed_files,
+                reverse_dependencies: plan.reverse_dependencies,
+                files_to_reindex: plan.files_to_reindex,
+            }
+        }
+    };
+    let partitions = pipeline.index_changed_paths(root, &plan.files_to_reindex, workers)?;
+    let mut integrity = Vec::new();
+    for partition in &partitions {
+        integrity.extend(check_partition_integrity(partition));
+    }
+    if !partitions.is_empty() {
+        store.replace_partitions(&partitions)?;
+    }
+    println!(
+        "re-indexed {} changed/dependent files ({} direct, {} reverse dependencies)",
+        partitions.len(),
+        plan.changed_files.len(),
+        plan.reverse_dependencies.len()
+    );
+    Ok(integrity)
 }
 
 fn print_symbols(
@@ -363,14 +394,24 @@ fn print_symbols(
             ]);
         }
     } else {
-        let engine = QueryEngine::new(store.load_latest()?);
+        let snapshot = store.load_latest()?;
+        let file_paths = snapshot
+            .partitions
+            .iter()
+            .map(|partition| (partition.file_id.clone(), partition.path.clone()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let engine = QueryEngine::new(snapshot);
         for node in engine.lookup_symbols(name, None, None, None) {
+            let path = node
+                .file_id
+                .as_ref()
+                .and_then(|file_id| file_paths.get(file_id));
             rows.push(vec![
                 node.qualified_name.clone().unwrap_or_default(),
                 node.symbol_kind
                     .map(|kind| format!("{kind:?}"))
                     .unwrap_or_default(),
-                format_location(None, node.span.as_ref())
+                format_location(path.map(PathBuf::as_path), node.span.as_ref())
                     .or_else(|| node.file_id.as_ref().map(ToString::to_string))
                     .unwrap_or_default(),
             ]);

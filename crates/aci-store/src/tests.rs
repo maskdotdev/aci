@@ -114,6 +114,33 @@ fn replace_all_writer_loads_from_manifest_without_snapshot() {
 }
 
 #[test]
+fn symbol_index_lookup_falls_back_after_delta_updates() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = GraphStore::open(dir.path()).expect("open store");
+    let original = partition("original");
+    let mut writer = store.replace_all_writer().expect("open writer");
+    writer.write(&original).expect("write original");
+    writer.finish().expect("finish writer");
+    assert!(
+        store
+            .lookup_symbol_index(Some("a"))
+            .expect("lookup before delta")
+            .is_some()
+    );
+
+    let replacement = partition("replacement");
+    store
+        .replace_partitions(&[replacement])
+        .expect("replace partition");
+    assert!(
+        store
+            .lookup_symbol_index(Some("a"))
+            .expect("lookup after delta")
+            .is_none()
+    );
+}
+
+#[test]
 fn dependency_index_plans_incremental_reverse_dependencies() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = GraphStore::open(dir.path()).expect("open store");

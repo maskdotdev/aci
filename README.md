@@ -66,28 +66,37 @@ cargo run -p aci-cli -- index .
 Query symbols:
 
 ```sh
-cargo run -p aci-cli -- query --store .aci symbols
-cargo run -p aci-cli -- query --store .aci symbols --name main
-cargo run -p aci-cli -- query --store .aci --pretty symbols --name main
-cargo run -p aci-cli -- query --store .aci --pretty --color always symbols --name main
+cargo run -p aci-cli -- query symbols
+cargo run -p aci-cli -- query symbols --name main
+cargo run -p aci-cli -- query --pretty symbols --name main
+cargo run -p aci-cli -- query --pretty --color always symbols --name main
 ```
 
 Symbol queries include jump locations in `path:line:column` form after the
-store is indexed with the current binary.
+store is indexed with the current binary. Query and export commands use `.aci`
+by default; pass `--store` only when reading a different store path.
 
 Query dependencies and impact:
 
 ```sh
-cargo run -p aci-cli -- query --store .aci deps --file src/lib.rs
-cargo run -p aci-cli -- query --store .aci impact src/lib.rs
-cargo run -p aci-cli -- query --store .aci --pretty impact src/lib.rs
+cargo run -p aci-cli -- query deps --file src/lib.rs
+cargo run -p aci-cli -- query impact src/lib.rs
+cargo run -p aci-cli -- query --pretty impact src/lib.rs
+```
+
+Keep the store updated while editing:
+
+```sh
+cargo run -p aci-cli -- watch .
+cargo run -p aci-cli -- watch . --debounce-ms 250
+cargo run -p aci-cli -- watch . --once --max-wait-ms 5000
 ```
 
 Export the graph:
 
 ```sh
-cargo run -p aci-cli -- export --store .aci --format jsonl
-cargo run -p aci-cli -- export --store .aci --format scip --output graph.scip.json
+cargo run -p aci-cli -- export --format jsonl
+cargo run -p aci-cli -- export --format scip --output graph.scip.json
 ```
 
 Run a cold-index benchmark:

@@ -27,6 +27,9 @@ impl GraphStore {
         &self,
         name: Option<&str>,
     ) -> aci_core::Result<Option<Vec<SymbolIndexEntry>>> {
+        if !self.read_delta_log()?.is_empty() {
+            return Ok(None);
+        }
         symbols::lookup(&self.root, name)
     }
 
