@@ -4,11 +4,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn partition(text: &str) -> GraphPartition {
+    partition_at("/repo/a.py", text)
+}
+
+fn partition_at(path: &str, text: &str) -> GraphPartition {
     let repo = RepositoryId::new("repo", &["store-test"]);
     let file = SourceFile::new(
         repo.clone(),
         Path::new("/repo"),
-        PathBuf::from("/repo/a.py"),
+        PathBuf::from(path),
         Language::Python,
         text.to_string(),
     );
@@ -72,6 +76,7 @@ fn replace_all_writer_loads_from_manifest_without_snapshot() {
     assert!(store.root().join("partitions/pack-00000.bin").exists());
     assert!(!store.root().join("symbols.jsonl").exists());
     assert!(store.root().join("symbols").is_dir());
+    assert!(store.root().join("deps.jsonl").exists());
     assert_eq!(
         store
             .read_manifest()
@@ -103,6 +108,36 @@ fn replace_all_writer_loads_from_manifest_without_snapshot() {
     let latest = store.load_latest().expect("load latest");
     assert_eq!(latest.partitions.len(), 1);
     assert_eq!(latest.partitions[0].fingerprint, replacement.fingerprint);
+}
+
+#[test]
+fn dependency_index_plans_incremental_reverse_dependencies() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = GraphStore::open(dir.path()).expect("open store");
+    let lib = partition_at("/repo/lib.py", "def run(): pass\n");
+    let mut app = partition_at("/repo/app.py", "from lib import run\n");
+    let repo = RepositoryId::new("repo", &["store-test"]);
+    app.nodes.push(GraphNode::deterministic(
+        &repo,
+        Some(&app.file_id),
+        NodeKind::Import,
+        Language::Python,
+        Some("lib".to_string()),
+        Some("lib".to_string()),
+        None,
+    ));
+    let mut writer = store.replace_all_writer().expect("open writer");
+    writer.write(&lib).expect("write lib");
+    writer.write(&app).expect("write app");
+    writer.finish().expect("finish writer");
+
+    let plan = store
+        .plan_incremental_reindex(&[lib.path.clone()])
+        .expect("plan")
+        .expect("dependency index exists");
+    assert_eq!(plan.changed_files, vec![lib.path]);
+    assert_eq!(plan.reverse_dependencies, vec![app.path]);
+    assert_eq!(plan.files_to_reindex.len(), 2);
 }
 
 #[test]

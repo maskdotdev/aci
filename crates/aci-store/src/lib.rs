@@ -1,4 +1,5 @@
 mod compact;
+mod dependencies;
 mod symbols;
 mod tags;
 
@@ -67,6 +68,7 @@ pub struct PartitionWriter<'a> {
     delta: Option<fs::File>,
     pack: Option<PartitionPack>,
     symbols: Option<symbols::SymbolIndexWriter>,
+    dependencies: Option<dependencies::DependencyIndexWriter>,
     replace_all: bool,
     written: usize,
 }
@@ -125,6 +127,7 @@ impl GraphStore {
                 next_index: 0,
             }),
             symbols: Some(symbols::SymbolIndexWriter::new(&self.root)?),
+            dependencies: Some(dependencies::DependencyIndexWriter::create(&self.root)?),
             replace_all: true,
             written: 0,
         })
@@ -142,6 +145,9 @@ impl GraphStore {
             ),
             pack: None,
             symbols: None,
+            dependencies: Some(dependencies::DependencyIndexWriter::copy_existing(
+                &self.root,
+            )?),
             replace_all: false,
             written: 0,
         })
@@ -253,6 +259,13 @@ impl GraphStore {
 
     pub fn lookup_symbol_index(&self, name: Option<&str>) -> Result<Option<Vec<SymbolIndexEntry>>> {
         symbols::lookup(&self.root, name)
+    }
+
+    pub fn plan_incremental_reindex(
+        &self,
+        changed_paths: &[PathBuf],
+    ) -> Result<Option<StoreIncrementalPlan>> {
+        dependencies::plan(&self.root, changed_paths)
     }
 
     fn read_manifest_jsonl(&self) -> Result<Vec<PartitionEntry>> {
@@ -387,6 +400,9 @@ impl PartitionWriter<'_> {
                 symbols.write_node(node)?;
             }
         }
+        if let Some(dependencies) = &mut self.dependencies {
+            dependencies.write_partition(partition)?;
+        }
         self.written += 1;
         Ok(())
     }
@@ -405,6 +421,9 @@ impl PartitionWriter<'_> {
             drop(manifest_jsonl.writer);
             fs::rename(manifest_jsonl.tmp_path, manifest_jsonl.final_path)?;
         }
+        if let Some(dependencies) = self.dependencies.take() {
+            dependencies.finish()?;
+        }
         if self.replace_all {
             let snapshot = self.store.root.join("snapshot.json");
             if snapshot.exists() {
@@ -415,6 +434,8 @@ impl PartitionWriter<'_> {
         Ok(self.written)
     }
 }
+
+pub use dependencies::StoreIncrementalPlan;
 
 pub fn build_adjacency(snapshot: &GraphSnapshot) -> AdjacencyIndex {
     let mut index = AdjacencyIndex::default();

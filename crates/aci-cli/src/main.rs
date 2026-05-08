@@ -167,8 +167,18 @@ fn index(args: IndexArgs) -> Result<()> {
             .iter()
             .map(|path| fs::canonicalize(path).unwrap_or_else(|_| root.join(path)))
             .collect::<Vec<_>>();
-        let snapshot = store.load_latest().unwrap_or_default();
-        let plan = plan_incremental_reindex(&snapshot, &changed);
+        let plan = match store.plan_incremental_reindex(&changed)? {
+            Some(plan) => plan,
+            None => {
+                let snapshot = store.load_latest().unwrap_or_default();
+                let plan = plan_incremental_reindex(&snapshot, &changed);
+                aci_store::StoreIncrementalPlan {
+                    changed_files: plan.changed_files,
+                    reverse_dependencies: plan.reverse_dependencies,
+                    files_to_reindex: plan.files_to_reindex,
+                }
+            }
+        };
         let partitions =
             pipeline.index_changed_paths(&root, &plan.files_to_reindex, options.workers)?;
         store.replace_partitions(&partitions)?;
