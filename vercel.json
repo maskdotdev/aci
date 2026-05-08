@@ -1,0 +1,28 @@
+{
+  "cleanUrls": true,
+  "headers": [
+    {
+      "source": "/install.sh",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "text/x-shellscript; charset=utf-8"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/install.sh",
+      "destination": "/site/install.sh"
+    },
+    {
+      "source": "/",
+      "destination": "/site/index.html"
+    },
+    {
+      "source": "/:path*",
+      "destination": "/site/:path*"
+    }
+  ]
+}
