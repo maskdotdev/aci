@@ -1,3 +1,5 @@
+use crate::args::ColorChoice;
+use crate::output::Output;
 use crate::{normalize_changed_paths, reindex_changed, run_index_command};
 use aci_indexer::{IndexOptions, IndexPipeline};
 use aci_store::GraphStore;
@@ -23,13 +25,23 @@ pub struct WatchArgs {
     pub(crate) once: bool,
     #[arg(long, help = "Skip the initial full index before watching")]
     pub(crate) no_initial: bool,
+    #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
+    pub(crate) color: ColorChoice,
 }
 
 pub fn run_watch(args: WatchArgs) -> Result<()> {
+    let color = args.color.enabled();
+    let out = Output::new(color);
     let path = fs::canonicalize(&args.path)
         .with_context(|| format!("canonicalizing {}", args.path.display()))?;
     if !args.no_initial {
-        run_index_command(path.clone(), args.store.clone(), args.workers, Vec::new())?;
+        run_index_command(
+            path.clone(),
+            args.store.clone(),
+            args.workers,
+            Vec::new(),
+            color,
+        )?;
     }
     let mut index_options = IndexOptions::new(&path);
     if let Some(workers) = args.workers {
@@ -37,14 +49,26 @@ pub fn run_watch(args: WatchArgs) -> Result<()> {
     }
     let store_path = absolute_store_path(&args.store)?;
     let pipeline = IndexPipeline::default();
-    println!("watching {}", path.display());
+    if color {
+        println!(
+            "{} {}",
+            out.label("watching"),
+            out.path(&path.display().to_string())
+        );
+    } else {
+        println!("watching {}", path.display());
+    }
     loop {
         let mut options = WatchOptions::new(&path);
         options.debounce = Duration::from_millis(args.debounce_ms);
         let changes = watch_until_quiet(options, Duration::from_millis(args.max_wait_ms))?;
         if changes.paths.is_empty() {
             if args.once {
-                println!("no changes observed");
+                if color {
+                    println!("{}", out.dim("no changes observed"));
+                } else {
+                    println!("no changes observed");
+                }
                 return Ok(());
             }
             continue;
@@ -62,6 +86,7 @@ pub fn run_watch(args: WatchArgs) -> Result<()> {
             index_options.workers,
             &changed_paths,
             None,
+            color,
         )?;
         for problem in integrity {
             eprintln!("integrity: {problem}");

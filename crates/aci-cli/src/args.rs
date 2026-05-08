@@ -30,17 +30,19 @@ pub struct IndexArgs {
     pub(crate) workers: Option<usize>,
     #[arg(long = "changed")]
     pub(crate) changed: Vec<PathBuf>,
+    #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
+    pub(crate) color: ColorChoice,
 }
 
 #[derive(Args)]
 pub struct QueryArgs {
-    #[arg(long, default_value = ".aci")]
+    #[arg(long, default_value = ".aci", global = true)]
     pub(crate) store: PathBuf,
-    #[arg(long, help = "Render query results as aligned tables")]
+    #[arg(long, global = true, help = "Render query results as aligned tables")]
     pub(crate) pretty: bool,
-    #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
+    #[arg(long, value_enum, default_value_t = ColorChoice::Auto, global = true)]
     pub(crate) color: ColorChoice,
-    #[arg(long, value_enum, default_value_t = QueryFormat::Text)]
+    #[arg(long, value_enum, default_value_t = QueryFormat::Text, global = true)]
     pub(crate) format: QueryFormat,
     #[command(subcommand)]
     pub(crate) command: QueryCommand,

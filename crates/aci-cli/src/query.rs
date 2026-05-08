@@ -3,20 +3,32 @@ use aci_query::QueryEngine;
 use aci_store::{GraphStore, SymbolIndexEntry};
 use anyhow::Result;
 use serde_json::{Value, json};
+use std::borrow::Cow;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use crate::args::{QueryArgs, QueryCommand, QueryFormat};
-use crate::output::{TableStyle, format_location, print_table};
+use crate::output::{Output, TableStyle, format_duration, format_location, print_table};
 
 pub fn run_query(args: QueryArgs) -> Result<()> {
+    let started = Instant::now();
+    let display_root = display_root_for_store(&args.store);
+    let color = args.color.enabled();
+    let out = Output::new(color);
     let store = GraphStore::open(args.store)?;
-    let style = TableStyle::new(args.pretty && args.color.enabled());
+    let display_root = display_root.as_deref();
+    let style = TableStyle::new(args.pretty && color);
     match args.command {
-        QueryCommand::Symbols { name } => {
-            print_symbols(&store, name.as_deref(), args.pretty, style, args.format)?
-        }
+        QueryCommand::Symbols { name } => print_symbols(
+            &store,
+            name.as_deref(),
+            args.pretty,
+            style,
+            args.format,
+            display_root,
+        )?,
         QueryCommand::Deps { file } => {
             let engine = QueryEngine::new(store.load_latest()?);
             let file = fs::canonicalize(&file).unwrap_or(file);
@@ -46,7 +58,7 @@ pub fn run_query(args: QueryArgs) -> Result<()> {
             let records = engine
                 .callers(&symbol)
                 .into_iter()
-                .map(|node| node_record(&engine, node))
+                .map(|node| node_record(&engine, node, display_root))
                 .collect::<Vec<_>>();
             if args.format == QueryFormat::Json {
                 print_query_json(
@@ -68,7 +80,7 @@ pub fn run_query(args: QueryArgs) -> Result<()> {
                 .matching_symbols(&symbol)
                 .into_iter()
                 .flat_map(|node| engine.callees(&node.id))
-                .map(|node| node_record(&engine, node))
+                .map(|node| node_record(&engine, node, display_root))
                 .collect::<Vec<_>>();
             if args.format == QueryFormat::Json {
                 print_query_json(
@@ -89,7 +101,7 @@ pub fn run_query(args: QueryArgs) -> Result<()> {
             let records = engine
                 .references(&symbol)
                 .into_iter()
-                .map(|node| node_record(&engine, node))
+                .map(|node| node_record(&engine, node, display_root))
                 .collect::<Vec<_>>();
             if args.format == QueryFormat::Json {
                 print_query_json(
@@ -128,7 +140,7 @@ pub fn run_query(args: QueryArgs) -> Result<()> {
                 .matching_symbols(&symbol)
                 .into_iter()
                 .flat_map(|node| engine.traverse_dependencies(&node.id, depth))
-                .map(|node| node_record(&engine, node))
+                .map(|node| node_record(&engine, node, display_root))
                 .collect::<Vec<_>>();
             if args.format == QueryFormat::Json {
                 print_query_json(
@@ -168,15 +180,22 @@ pub fn run_query(args: QueryArgs) -> Result<()> {
                     &["Impacted file"],
                     impacted
                         .into_iter()
-                        .map(|file| vec![file.display().to_string()]),
+                        .map(|file| vec![display_path_string(&file, display_root)]),
                     style,
                 );
             } else {
                 for file in impacted {
-                    println!("{}", file.display());
+                    println!("{}", display_path_string(&file, display_root));
                 }
             }
         }
+    }
+    std::io::stdout().flush()?;
+    let timing = format!("query completed in {}", format_duration(started.elapsed()));
+    if color {
+        eprintln!("{}", out.dim(&timing));
+    } else {
+        eprintln!("{timing}");
     }
     Ok(())
 }
@@ -187,6 +206,7 @@ fn print_symbols(
     pretty: bool,
     style: TableStyle,
     format: QueryFormat,
+    display_root: Option<&Path>,
 ) -> Result<()> {
     let mut rows = Vec::new();
     let mut records = Vec::new();
@@ -201,7 +221,7 @@ fn print_symbols(
                         .symbol_kind
                         .map(|kind| format!("{kind:?}"))
                         .unwrap_or_default(),
-                    format_location(entry.path.as_deref(), entry.span.as_ref())
+                    format_human_location(entry.path.as_deref(), entry.span.as_ref(), display_root)
                         .or_else(|| entry.file_id.map(|file_id| file_id.to_string()))
                         .unwrap_or_default(),
                 ]);
@@ -228,9 +248,13 @@ fn print_symbols(
                     node.symbol_kind
                         .map(|kind| format!("{kind:?}"))
                         .unwrap_or_default(),
-                    format_location(path.map(PathBuf::as_path), node.span.as_ref())
-                        .or_else(|| node.file_id.as_ref().map(ToString::to_string))
-                        .unwrap_or_default(),
+                    format_human_location(
+                        path.map(PathBuf::as_path),
+                        node.span.as_ref(),
+                        display_root,
+                    )
+                    .or_else(|| node.file_id.as_ref().map(ToString::to_string))
+                    .unwrap_or_default(),
                 ]);
             }
         }
@@ -245,6 +269,46 @@ fn print_symbols(
         }
     }
     Ok(())
+}
+
+fn display_root_for_store(store: &Path) -> Option<PathBuf> {
+    if store.file_name().and_then(|name| name.to_str()) != Some(".aci") {
+        return None;
+    }
+    let parent = store.parent()?;
+    Some(fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf()))
+}
+
+fn format_human_location(
+    path: Option<&Path>,
+    span: Option<&SourceSpan>,
+    display_root: Option<&Path>,
+) -> Option<String> {
+    let path = path.map(|path| display_path_string(path, display_root));
+    match (path, span) {
+        (Some(path), Some(span)) => Some(format!(
+            "{}:{}:{}",
+            path, span.start.line, span.start.column
+        )),
+        (Some(path), None) => Some(path),
+        (None, Some(span)) => Some(format!("{}:{}", span.start.line, span.start.column)),
+        (None, None) => None,
+    }
+}
+
+fn display_path_string(path: &Path, display_root: Option<&Path>) -> String {
+    display_path(path, display_root).display().to_string()
+}
+
+fn display_path<'a>(path: &'a Path, display_root: Option<&Path>) -> Cow<'a, Path> {
+    if let Some(root) = display_root {
+        if let Ok(relative) = path.strip_prefix(root) {
+            if !relative.as_os_str().is_empty() {
+                return Cow::Owned(relative.to_path_buf());
+            }
+        }
+    }
+    Cow::Borrowed(path)
 }
 
 #[derive(Clone, Debug)]
@@ -263,7 +327,7 @@ impl QueryNode {
     }
 }
 
-fn node_record(engine: &QueryEngine, node: &GraphNode) -> QueryNode {
+fn node_record(engine: &QueryEngine, node: &GraphNode, display_root: Option<&Path>) -> QueryNode {
     let path = engine.path_for_node(node);
     let name = node
         .qualified_name
@@ -274,7 +338,8 @@ fn node_record(engine: &QueryEngine, node: &GraphNode) -> QueryNode {
         .symbol_kind
         .map(|kind| format!("{kind:?}"))
         .unwrap_or_else(|| format!("{:?}", node.kind));
-    let location = format_location(path, node.span.as_ref()).unwrap_or_default();
+    let location =
+        format_human_location(path, node.span.as_ref(), display_root).unwrap_or_default();
     QueryNode {
         value: node_json(node, path),
         row: vec![name, kind, location],

@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="ACI is a Rust-first CLI for indexing, querying, watching, and exporting code graphs." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23161817'/%3E%3Ctext x='32' y='41' text-anchor='middle' font-size='28' font-family='monospace' font-weight='700' fill='%23f4efe4'%3EA%3C/text%3E%3C/svg%3E" />
+    <title>ACI | Rust-first Code Graph Indexer</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,500;6..72,650&family=Work+Sans:wght@400;500;600;700&display=swap");
+      :root {
+        color-scheme: light;
+        --paper: #f4efe4;
+        --ink: #161817;
+        --muted: #5d625d;
+        --panel: rgba(255, 251, 239, 0.86);
+        --line: #cfc4ad;
+        --charcoal: #242927;
+        --green: #0f8b68;
+        --green-deep: #075f4a;
+        --amber: #d99a29;
+        --coral: #cf5035;
+        --shadow: 0 24px 80px rgba(42, 38, 30, 0.22);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background:
+          linear-gradient(90deg, rgba(22, 24, 23, 0.05) 1px, transparent 1px) 0 0 / 72px 72px,
+          linear-gradient(rgba(22, 24, 23, 0.045) 1px, transparent 1px) 0 0 / 72px 72px,
+          var(--paper);
+        color: var(--ink);
+        font-family: "Work Sans", "Avenir Next", sans-serif;
+        letter-spacing: 0;
+      }
+      body::before,
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+      }
+      body::before {
+        background-image:
+          radial-gradient(circle at 18% 24%, rgba(15, 139, 104, 0.12), transparent 28%),
+          radial-gradient(circle at 76% 16%, rgba(217, 154, 41, 0.14), transparent 24%),
+          radial-gradient(circle at 72% 78%, rgba(207, 80, 53, 0.1), transparent 26%);
+        mix-blend-mode: multiply;
+      }
+      body::after {
+        opacity: 0.24;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.72' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.32'/%3E%3C/svg%3E");
+      }
+      a {
+        color: inherit;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+      .site-shell {
+        position: relative;
+        z-index: 1;
+        overflow: hidden;
+      }
+      .nav {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 72px;
+        padding: 0 56px;
+        border-bottom: 1px solid rgba(22, 24, 23, 0.12);
+        background: rgba(244, 239, 228, 0.82);
+        backdrop-filter: blur(18px);
+      }
+      .brand,
+      .nav-links,
+      .eyebrow,
+      .button,
+      .terminal,
+      .metric span,
+      .feature h3,
+      .command h3,
+      .command code,
+      .glyph,
+      .step::before,
+      .step h3,
+      .footer {
+        font-family: "IBM Plex Mono", monospace;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 700;
+        text-decoration: none;
+      }
+      .mark {
+        display: grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        background: var(--ink);
+        color: var(--paper);
+        box-shadow: 5px 5px 0 var(--green);
+      }
+      .nav-links {
+        display: flex;
+        gap: 6px;
+        font-size: 13px;
+      }
+      .nav-links a {
+        padding: 10px 12px;
+        text-decoration: none;
+      }
+      .nav-links a:hover {
+        background: rgba(15, 139, 104, 0.12);
+      }
+      .hero {
+        position: relative;
+        min-height: calc(100vh - 72px);
+        padding: 96px 56px 42px;
+      }
+      .graph-scene {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        overflow: hidden;
+        pointer-events: none;
+      }
+      .rail {
+        position: absolute;
+        width: 36%;
+        min-width: 280px;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, rgba(22, 24, 23, 0.34), transparent);
+        transform-origin: left center;
+      }
+      .rail.one {
+        top: 17%;
+        right: 8%;
+        transform: rotate(18deg);
+      }
+      .rail.two {
+        top: 54%;
+        right: 12%;
+        transform: rotate(-28deg);
+      }
+      .rail.three {
+        top: 72%;
+        left: 11%;
+        transform: rotate(11deg);
+      }
+      .node {
+        position: absolute;
+        display: grid;
+        place-items: center;
+        min-width: 92px;
+        height: 38px;
+        padding: 0 12px;
+        border: 1px solid var(--ink);
+        background: rgba(255, 251, 239, 0.76);
+        box-shadow: 6px 6px 0 rgba(22, 24, 23, 0.13);
+        font: 600 12px "IBM Plex Mono", monospace;
+        animation: drift 8s ease-in-out infinite;
+      }
+      .node:nth-child(2n) {
+        animation-duration: 9.4s;
+      }
+      .node:nth-child(3n) {
+        animation-duration: 10.8s;
+      }
+      .node.core {
+        top: 16%;
+        right: 31%;
+        color: white;
+        background: var(--green-deep);
+      }
+      .node.indexer {
+        top: 21%;
+        right: 4%;
+      }
+      .node.query {
+        top: 81%;
+        right: 42%;
+        background: #f7d885;
+      }
+      .node.store {
+        top: 74%;
+        right: 5%;
+      }
+      .node.adapters {
+        top: 86%;
+        left: 7%;
+        background: #dcecdf;
+      }
+      @keyframes drift {
+        50% {
+          transform: translate3d(8px, -10px, 0);
+        }
+      }
+      .hero-grid,
+      .section-inner {
+        max-width: 1180px;
+        margin: 0 auto;
+      }
+      .hero-grid {
+        position: relative;
+        z-index: 2;
+        display: grid;
+        grid-template-columns: minmax(0, 1.02fr) minmax(320px, 0.72fr);
+        gap: 72px;
+        align-items: center;
+      }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 22px;
+        color: var(--green-deep);
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .eyebrow::before {
+        content: "";
+        width: 46px;
+        height: 2px;
+        background: var(--green);
+      }
+      h1,
+      h2 {
+        font-family: "Newsreader", Georgia, serif;
+        font-weight: 650;
+      }
+      h1 {
+        max-width: 760px;
+        margin-bottom: 24px;
+        font-size: 10.5rem;
+        line-height: 0.82;
+      }
+      .hero-copy {
+        max-width: 660px;
+        margin-bottom: 34px;
+        color: #343933;
+        font-size: 1.35rem;
+        line-height: 1.36;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 34px;
+      }
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 48px;
+        padding: 0 18px;
+        border: 1px solid var(--ink);
+        background: var(--ink);
+        color: var(--paper);
+        font-size: 14px;
+        font-weight: 700;
+        text-decoration: none;
+        box-shadow: 5px 5px 0 var(--green);
+        transition: transform 160ms ease, box-shadow 160ms ease;
+      }
+      .button:hover {
+        transform: translate(-2px, -2px);
+        box-shadow: 8px 8px 0 var(--green);
+      }
+      .button.secondary {
+        background: rgba(255, 251, 239, 0.76);
+        color: var(--ink);
+        box-shadow: 5px 5px 0 var(--amber);
+      }
+      .install-command { max-width: 100%; justify-content: flex-start; font-size: 13px; overflow-wrap: anywhere; text-align: left; }
+      .terminal {
+        overflow: hidden;
+        border: 1px solid var(--ink);
+        background: var(--charcoal);
+        box-shadow: var(--shadow), 9px 9px 0 var(--coral);
+        color: #ecf2e8;
+      }
+      .terminal-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 13px 14px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+        background: #171b19;
+        font-size: 12px;
+      }
+      .dots {
+        display: flex;
+        gap: 7px;
+      }
+      .dots span {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--coral);
+      }
+      .dots span:nth-child(2) {
+        background: var(--amber);
+      }
+      .dots span:nth-child(3) {
+        background: var(--green);
+      }
+      .terminal pre {
+        margin: 0;
+        padding: 28px;
+        overflow: auto;
+        font: 400 0.88rem/1.72 "IBM Plex Mono", monospace;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+      }
+      .prompt {
+        color: #8fd9be;
+      }
+      .output {
+        color: #b8c9be;
+      }
+      .metric-strip,
+      .feature-grid {
+        display: grid;
+        border: 1px solid var(--ink);
+        background: var(--ink);
+        gap: 1px;
+      }
+      .metric-strip {
+        grid-template-columns: repeat(3, 1fr);
+        margin-top: 56px;
+      }
+      .metric {
+        min-height: 112px;
+        padding: 18px;
+        background: rgba(255, 251, 239, 0.86);
+      }
+      .metric strong {
+        display: block;
+        margin-bottom: 8px;
+        font: 650 3.2rem/0.9 "Newsreader", Georgia, serif;
+      }
+      .metric span {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 600;
+      }
+      main {
+        position: relative;
+        z-index: 2;
+      }
+      section {
+        padding: 110px 56px;
+      }
+      .section-heading {
+        display: grid;
+        grid-template-columns: minmax(0, 0.78fr) minmax(240px, 0.42fr);
+        gap: 32px;
+        align-items: end;
+        margin-bottom: 34px;
+      }
+      h2 {
+        font-size: 5.2rem;
+        line-height: 0.94;
+      }
+      .section-heading p {
+        color: var(--muted);
+        font-size: 1.06rem;
+        line-height: 1.55;
+      }
+      .feature-grid {
+        grid-template-columns: repeat(4, 1fr);
+      }
+      .benchmark-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .benchmark { min-height: 420px; }
+      .bench-value { margin: 30px 0 16px; font: 650 5.6rem/0.82 "Newsreader", Georgia, serif; }
+      .bench-meta { font-family: "IBM Plex Mono", monospace; font-size: 13px; overflow-wrap: anywhere; }
+      .feature {
+        min-height: 250px;
+        padding: 22px;
+        background: var(--panel);
+      }
+      .feature:nth-child(2) {
+        background: #f2e4bd;
+      }
+      .feature:nth-child(3) {
+        background: #dcecdf;
+      }
+      .glyph {
+        display: grid;
+        place-items: center;
+        width: 44px;
+        height: 44px;
+        margin-bottom: 44px;
+        background: var(--ink);
+        color: var(--paper);
+        font-weight: 700;
+      }
+      .feature h3,
+      .command h3,
+      .step h3 {
+        margin-bottom: 12px;
+        font-size: 15px;
+        line-height: 1.25;
+      }
+      .feature p,
+      .command p,
+      .step p {
+        margin-bottom: 0;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .benchmark-grid ul {
+        margin: 14px 0 0;
+        padding-left: 18px;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+      .benchmark-grid code { font: 700 1em "IBM Plex Mono", monospace; overflow-wrap: anywhere; }
+      .commands {
+        background: #212725;
+        color: var(--paper);
+      }
+      .commands .section-heading p,
+      .commands .command p {
+        color: #b9c1ba;
+      }
+      .command-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+      .command {
+        display: grid;
+        gap: 18px;
+        min-height: 190px;
+        padding: 22px;
+        border: 1px solid rgba(244, 239, 228, 0.28);
+        background: rgba(244, 239, 228, 0.06);
+      }
+      .command code {
+        display: block;
+        padding: 14px;
+        overflow-x: auto;
+        overflow-wrap: anywhere;
+        background: rgba(0, 0, 0, 0.28);
+        color: #95e0c4;
+        font-size: 13px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+      }
+      .workflow {
+        display: grid;
+        grid-template-columns: 0.85fr 1.15fr;
+        gap: 74px;
+        align-items: start;
+      }
+      .workflow-copy {
+        position: sticky;
+        top: 96px;
+      }
+      .workflow-copy p {
+        max-width: 440px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+      .steps {
+        display: grid;
+        gap: 12px;
+        counter-reset: step;
+      }
+      .step {
+        display: grid;
+        grid-template-columns: 74px 1fr;
+        gap: 18px;
+        min-height: 132px;
+        padding: 20px;
+        border: 1px solid var(--ink);
+        background: rgba(255, 251, 239, 0.76);
+      }
+      .step::before {
+        counter-increment: step;
+        content: counter(step, decimal-leading-zero);
+        display: grid;
+        place-items: center;
+        width: 58px;
+        height: 58px;
+        background: var(--ink);
+        color: var(--paper);
+        font-weight: 700;
+      }
+      .footer {
+        padding: 32px 56px;
+        border-top: 1px solid rgba(22, 24, 23, 0.16);
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .footer-inner {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        max-width: 1180px;
+        margin: 0 auto;
+      }
+      @media (max-width: 940px) {
+        .nav,
+        .hero,
+        section,
+        .footer {
+          padding-right: 28px;
+          padding-left: 28px;
+        }
+        .hero {
+          padding-top: 64px;
+        }
+        .hero-grid,
+        .section-heading,
+        .workflow {
+          grid-template-columns: 1fr;
+          gap: 34px;
+        }
+        .terminal {
+          max-width: 680px;
+        }
+        .feature-grid,
+        .command-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .workflow-copy {
+          position: static;
+        }
+        h1 {
+          font-size: 8rem;
+        }
+        h2 {
+          font-size: 4.3rem;
+        }
+      }
+      @media (max-width: 640px) {
+        .nav {
+          min-height: 64px;
+          padding-right: 20px;
+          padding-left: 20px;
+        }
+        .nav-links {
+          display: none;
+        }
+        .hero,
+        section,
+        .footer {
+          padding-right: 20px;
+          padding-left: 20px;
+        }
+        h1 {
+          font-size: 5.8rem;
+        }
+        h2 {
+          font-size: 3.25rem;
+        }
+        .hero-copy {
+          font-size: 1.1rem;
+        }
+        .metric-strip,
+        .feature-grid,
+        .command-grid {
+          grid-template-columns: 1fr;
+        }
+        .metric {
+          min-height: 94px;
+        }
+        .step {
+          grid-template-columns: 1fr;
+        }
+        .graph-scene {
+          display: none;
+        }
+        .footer-inner {
+          flex-direction: column;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="site-shell">
+      <nav class="nav" aria-label="Primary navigation">
+        <a class="brand" href="#top" aria-label="ACI home">
+          <span class="mark">A</span>
+          <span>ACI</span>
+        </a>
+        <div class="nav-links">
+          <a href="#features">features</a>
+          <a href="#commands">commands</a>
+          <a href="#benchmarks">benchmarks</a>
+          <a href="#workflow">workflow</a>
+        </div>
+      </nav>
+      <header class="hero" id="top">
+        <div class="graph-scene" aria-hidden="true">
+          <span class="rail one"></span>
+          <span class="rail two"></span>
+          <span class="rail three"></span>
+          <span class="node core">aci-core</span>
+          <span class="node indexer">indexer</span>
+          <span class="node query">query</span>
+          <span class="node store">store</span>
+          <span class="node adapters">adapters</span>
+        </div>
+        <div class="hero-grid">
+          <div>
+            <p class="eyebrow">Rust-first code graph CLI</p>
+            <h1>ACI</h1>
+            <p class="hero-copy">Fast local code indexing for large repositories. ACI turns source files into a queryable graph without a daemon, database, or hosted service.</p>
+            <div class="actions">
+              <a class="button install-command" href="#commands"><span class="prompt">$</span>&nbsp;curl -fsSL https://aci.mask.dev/install.sh | sh</a>
+              <a class="button secondary" href="#features">See what it tracks</a>
+            </div>
+            <div class="metric-strip" aria-label="ACI highlights">
+              <div class="metric"><strong>1.5s</strong><span>Next.js local cold index</span></div>
+              <div class="metric"><strong>40.7s</strong><span>Chromium local cold index</span></div>
+              <div class="metric"><strong>15.8M</strong><span>Chromium graph edges</span></div>
+            </div>
+          </div>
+          <aside class="terminal" aria-label="Example ACI CLI session">
+            <div class="terminal-top">
+              <div class="dots" aria-hidden="true"><span></span><span></span><span></span></div>
+              <span>next.js/.aci</span>
+            </div>
+            <pre><span class="prompt">$</span> git clone --depth 1 https://github.com/vercel/next.js.git
+<span class="prompt">$</span> cd next.js
+<span class="prompt">$</span> aci index .
+<span class="output">indexed 21869 files, skipped 970, diagnostics 379 in 2.59s</span>
+<span class="prompt">$</span> aci query --pretty --color never symbols --name NextConfig
+<span class="output">+--------------------------+-----------+--------------------------------------------------+
+| Symbol                   | Kind      | Location                                         |
++--------------------------+-----------+--------------------------------------------------+
+| config-shared.NextConfig | Interface | packages/next/src/server/config-shared.ts:1325:8 |
+| next_config::NextConfig  | Class     | crates/next-core/src/next_config.rs:79:1         |
++--------------------------+-----------+--------------------------------------------------+</span></pre>
+          </aside>
+        </div>
+      </header>
+      <main>
+        <section id="features">
+          <div class="section-inner">
+            <div class="section-heading">
+              <h2>Built for fast graph queries after the index.</h2>
+              <p>ACI writes a compact local store with stable IDs and per-file partitions, so command-line queries do not need to crawl the repo again.</p>
+            </div>
+            <div class="feature-grid">
+              <article class="feature">
+                <div class="glyph">01</div>
+                <h3>Symbols and spans</h3>
+                <p>Track names, kinds, qualified paths, and jump locations in path:line:column form.</p>
+              </article>
+              <article class="feature">
+                <div class="glyph">02</div>
+                <h3>Imports and packages</h3>
+                <p>Capture code dependencies plus package metadata from files like package.json.</p>
+              </article>
+              <article class="feature">
+                <div class="glyph">03</div>
+                <h3>Calls and references</h3>
+                <p>Traverse callers, callees, refs, dependency trees, and impact sets from one store.</p>
+              </article>
+              <article class="feature">
+                <div class="glyph">04</div>
+                <h3>Exportable graph</h3>
+                <p>Write JSONL, KiteDB-shaped JSONL, SCIP-shaped JSON, and LSIF-shaped JSON.</p>
+              </article>
+            </div>
+          </div>
+        </section>
+        <section class="commands" id="commands">
+          <div class="section-inner">
+            <div class="section-heading">
+              <h2>Index, query, watch, and export from one CLI.</h2>
+              <p>Build a local graph store, query relationships, keep it current while editing, and export the same graph for other tools.</p>
+            </div>
+            <div class="command-grid">
+              <article class="command">
+                <h3>Install</h3>
+                <code>curl -fsSL https://aci.mask.dev/install.sh | sh</code>
+                <p>Install ACI as a single local binary.</p>
+              </article>
+              <article class="command">
+                <h3>Index a repository</h3>
+                <code>aci index .</code>
+                <p>Creates or replaces graph partitions inside the default .aci store.</p>
+              </article>
+              <article class="command">
+                <h3>Query relationships</h3>
+                <code>aci query --pretty symbols --name main</code>
+                <p>Use text tables for humans or JSON output for scripts and tools.</p>
+              </article>
+              <article class="command">
+                <h3>Watch changes</h3>
+                <code>aci watch . --debounce-ms 250</code>
+                <p>Keep the graph fresh while editing without re-indexing the world.</p>
+              </article>
+              <article class="command">
+                <h3>Export the graph</h3>
+                <code>aci export --format jsonl</code>
+                <p>Move the same internal graph into downstream formats when needed.</p>
+              </article>
+              <article class="command">
+                <h3>Benchmark a checkout</h3>
+                <code>aci bench cold ./next.js --variant tree-sitter-fallback</code>
+                <p>Run cold index timing against real repositories and compare extraction modes.</p>
+              </article>
+            </div>
+          </div>
+        </section>
+        <section id="benchmarks">
+          <div class="section-inner">
+            <div class="section-heading">
+              <h2>Cold-index performance on real repositories.</h2>
+              <p>Measured on local checkouts with the tree-sitter-fallback extraction mode.</p>
+            </div>
+            <div class="feature-grid benchmark-grid">
+              <article class="feature benchmark">
+                <div class="glyph">NX</div>
+                <div class="bench-value">1.51s</div>
+                <h3>Next.js canary</h3>
+                <p class="bench-meta">commit 8980f3a76aa5bc7c2ec93a39cd5d81a7502800f1</p>
+                <ul>
+                  <li>Indexed files: <code>21,869</code></li>
+                  <li>Nodes: <code>435,553</code></li>
+                  <li>Edges: <code>616,376</code></li>
+                  <li>Diagnostics: <code>379</code></li>
+                  <li>Skipped files: <code>970</code></li>
+                </ul>
+              </article>
+              <article class="feature benchmark">
+                <div class="glyph">CH</div>
+                <div class="bench-value">40.74s</div>
+                <h3>Chromium local checkout</h3>
+                <p class="bench-meta">commit 81c154bee3c796d05d993b89e44bf43e3ac92bd9</p>
+                <ul>
+                  <li>Indexed files: <code>149,287</code></li>
+                  <li>Nodes: <code>8,635,542</code></li>
+                  <li>Edges: <code>15,819,485</code></li>
+                  <li>Diagnostics: <code>91,088</code></li>
+                  <li>Skipped files: <code>253,039</code></li>
+                </ul>
+              </article>
+            </div>
+          </div>
+        </section>
+        <section id="workflow">
+          <div class="section-inner workflow">
+            <div class="workflow-copy">
+              <p class="eyebrow">local-first pipeline</p>
+              <h2>From files to answers.</h2>
+              <p>ACI keeps parser details behind adapters and writes a compact local graph store for fast lookup, traversal, impact analysis, and export.</p>
+            </div>
+            <div class="steps">
+              <article class="step"><div><h3>Discover and fingerprint</h3><p>Skip vendor, generated, binary, and unchanged paths before parsing.</p></div></article>
+              <article class="step"><div><h3>Extract neutral graph facts</h3><p>Language adapters emit the same internal model across Tree-sitter and scanner fallback paths.</p></div></article>
+              <article class="step"><div><h3>Write partitioned store data</h3><p>Changed files can replace their partitions without rewriting unrelated graph records.</p></div></article>
+              <article class="step"><div><h3>Query or export</h3><p>Ask for symbols, deps, callers, callees, refs, packages, impact, JSONL, SCIP, or LSIF.</p></div></article>
+            </div>
+          </div>
+        </section>
+      </main>
+      <footer class="footer">
+        <div class="footer-inner">
+          <span>ACI code graph indexer</span>
+          <span>Rust workspace / local .aci store / deterministic IDs</span>
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>
