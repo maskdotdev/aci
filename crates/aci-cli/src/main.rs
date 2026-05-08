@@ -167,6 +167,10 @@ fn index(args: IndexArgs) -> Result<()> {
             .iter()
             .map(|path| fs::canonicalize(path).unwrap_or_else(|_| root.join(path)))
             .collect::<Vec<_>>();
+        let changed = changed
+            .into_iter()
+            .filter(|path| pipeline.path_candidate(path))
+            .collect::<Vec<_>>();
         let plan = match store.plan_incremental_reindex(&changed)? {
             Some(plan) => plan,
             None => {

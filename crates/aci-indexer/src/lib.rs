@@ -222,6 +222,10 @@ impl IndexPipeline {
         Ok(partitions)
     }
 
+    pub fn path_candidate(&self, path: &Path) -> bool {
+        !is_vendor_or_generated(path) && self.registry.path_candidate(path)
+    }
+
     fn index_file(
         &self,
         repo_id: &RepositoryId,
