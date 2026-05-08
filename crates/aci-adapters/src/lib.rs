@@ -95,6 +95,26 @@ mod tests {
             registry.detect_language(Path::new("package.json"), br#"{ "name": "app" }"#),
             Language::Json
         );
+        assert_eq!(
+            registry.detect_language(Path::new("src/app.c"), b"int main(void) { return 0; }"),
+            Language::C
+        );
+        assert_eq!(
+            registry.detect_language(Path::new("src/app.cpp"), b"namespace app {}"),
+            Language::Cpp
+        );
+        assert_eq!(
+            registry.detect_language(Path::new("src/App.java"), b"public class App {}"),
+            Language::Java
+        );
+        assert_eq!(
+            registry.detect_language(Path::new("src/app.m"), b"@interface App\n@end\n"),
+            Language::ObjectiveC
+        );
+        assert_eq!(
+            registry.detect_language(Path::new("src/app.go"), b"package app\n"),
+            Language::Go
+        );
     }
 
     #[test]
@@ -105,7 +125,10 @@ mod tests {
         assert!(registry.path_candidate(Path::new("crates/app/src/lib.rs")));
         assert!(registry.path_candidate(Path::new("package.json")));
         assert!(registry.path_candidate(Path::new("scripts/run")));
-        assert!(!registry.path_candidate(Path::new("src/app.cc")));
+        assert!(registry.path_candidate(Path::new("src/app.cc")));
+        assert!(registry.path_candidate(Path::new("src/app.java")));
+        assert!(registry.path_candidate(Path::new("src/app.m")));
+        assert!(registry.path_candidate(Path::new("src/app.go")));
         assert!(!registry.path_candidate(Path::new("assets/logo.png")));
     }
 
@@ -137,6 +160,36 @@ mod tests {
                 include_str!("../fixtures/json/package.json"),
                 Language::Json,
                 ["package.json", "fixture-package"].as_slice(),
+            ),
+            (
+                PathBuf::from("fixtures/c/coverage.c"),
+                include_str!("../fixtures/c/coverage.c"),
+                Language::C,
+                ["Point", "add", "main"].as_slice(),
+            ),
+            (
+                PathBuf::from("fixtures/cpp/coverage.cpp"),
+                include_str!("../fixtures/cpp/coverage.cpp"),
+                Language::Cpp,
+                ["demo", "Widget", "size", "make_widget"].as_slice(),
+            ),
+            (
+                PathBuf::from("fixtures/go/coverage.go"),
+                include_str!("../fixtures/go/coverage.go"),
+                Language::Go,
+                ["demo", "Counter", "Add", "Inc"].as_slice(),
+            ),
+            (
+                PathBuf::from("fixtures/java/coverage.java"),
+                include_str!("../fixtures/java/coverage.java"),
+                Language::Java,
+                ["demo", "Widget", "size"].as_slice(),
+            ),
+            (
+                PathBuf::from("fixtures/objective_c/coverage.m"),
+                include_str!("../fixtures/objective_c/coverage.m"),
+                Language::ObjectiveC,
+                ["Widget", "run"].as_slice(),
             ),
         ];
 
@@ -180,6 +233,31 @@ mod tests {
                 PathBuf::from("fixtures/rust/syntax-error.rs"),
                 include_str!("../fixtures/rust/syntax-error.rs"),
                 Language::Rust,
+            ),
+            (
+                PathBuf::from("fixtures/c/syntax-error.c"),
+                include_str!("../fixtures/c/syntax-error.c"),
+                Language::C,
+            ),
+            (
+                PathBuf::from("fixtures/cpp/syntax-error.cpp"),
+                include_str!("../fixtures/cpp/syntax-error.cpp"),
+                Language::Cpp,
+            ),
+            (
+                PathBuf::from("fixtures/go/syntax-error.go"),
+                include_str!("../fixtures/go/syntax-error.go"),
+                Language::Go,
+            ),
+            (
+                PathBuf::from("fixtures/java/syntax-error.java"),
+                include_str!("../fixtures/java/syntax-error.java"),
+                Language::Java,
+            ),
+            (
+                PathBuf::from("fixtures/objective_c/syntax-error.m"),
+                include_str!("../fixtures/objective_c/syntax-error.m"),
+                Language::ObjectiveC,
             ),
         ] {
             let file = SourceFile::new(
