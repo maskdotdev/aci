@@ -3,11 +3,14 @@ use aci_store::{GraphStore, check_partition_integrity};
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use crate::args::IndexArgs;
+use crate::output::{Output, format_duration};
 
 pub fn run_index(args: IndexArgs) -> Result<()> {
-    run_index_command(args.path, args.store, args.workers, args.changed)
+    let color = args.color.enabled();
+    run_index_command(args.path, args.store, args.workers, args.changed, color)
 }
 
 pub(crate) fn run_index_command(
@@ -15,28 +18,55 @@ pub(crate) fn run_index_command(
     store: PathBuf,
     workers: Option<usize>,
     changed: Vec<PathBuf>,
+    color: bool,
 ) -> Result<()> {
+    let started = Instant::now();
     let mut options = IndexOptions::new(&path);
     if let Some(workers) = workers {
         options.workers = workers;
     }
     let pipeline = IndexPipeline::default();
     let store = GraphStore::open(store)?;
+    let out = Output::new(color);
     let integrity = if changed.is_empty() {
         let mut writer = store.replace_all_writer()?;
         let summary = pipeline
             .stream_path(options, |partition| writer.write(partition))
             .with_context(|| format!("indexing {}", path.display()))?;
         writer.finish()?;
-        println!(
-            "indexed {} files, skipped {}, diagnostics {}",
-            summary.indexed_files, summary.skipped_files, summary.diagnostics
-        );
+        if color {
+            println!(
+                "{} {} files  {} {}  {} {}  {}",
+                out.label("indexed"),
+                out.value(summary.indexed_files),
+                out.dim("skipped"),
+                out.dim(&summary.skipped_files.to_string()),
+                out.dim("diagnostics"),
+                out.dim(&summary.diagnostics.to_string()),
+                out.dim(&format_duration(started.elapsed()))
+            );
+        } else {
+            println!(
+                "indexed {} files, skipped {}, diagnostics {} in {}",
+                summary.indexed_files,
+                summary.skipped_files,
+                summary.diagnostics,
+                format_duration(started.elapsed())
+            );
+        }
         store.partition_file_check()?
     } else {
         let root = fs::canonicalize(&path)
             .with_context(|| format!("canonicalizing {}", path.display()))?;
-        reindex_changed(&store, &pipeline, &root, options.workers, &changed, None)?
+        reindex_changed(
+            &store,
+            &pipeline,
+            &root,
+            options.workers,
+            &changed,
+            None,
+            color,
+        )?
     };
     for problem in integrity {
         eprintln!("integrity: {problem}");
@@ -63,13 +93,28 @@ pub(crate) fn reindex_changed(
     workers: usize,
     changed: &[PathBuf],
     ignored_root: Option<&Path>,
+    color: bool,
 ) -> Result<Vec<String>> {
+    let started = Instant::now();
+    let out = Output::new(color);
     let mut changed = normalize_changed_paths(root, changed, pipeline);
     if let Some(ignored_root) = ignored_root {
         changed.retain(|path| !path.starts_with(ignored_root));
     }
     if changed.is_empty() {
-        println!("re-indexed 0 changed/dependent files (0 direct, 0 reverse dependencies)");
+        if color {
+            println!(
+                "{} {} files  {}",
+                out.label("re-indexed"),
+                out.value(0),
+                out.dim(&format_duration(started.elapsed()))
+            );
+        } else {
+            println!(
+                "re-indexed 0 changed/dependent files (0 direct, 0 reverse dependencies) in {}",
+                format_duration(started.elapsed())
+            );
+        }
         return Ok(Vec::new());
     }
     let plan = match store.plan_incremental_reindex(&changed)? {
@@ -94,11 +139,25 @@ pub(crate) fn reindex_changed(
     if !partitions.is_empty() {
         store.replace_partitions(&partitions)?;
     }
-    println!(
-        "re-indexed {} changed/dependent files ({} direct, {} reverse dependencies)",
-        partitions.len(),
-        plan.changed_files.len(),
-        plan.reverse_dependencies.len()
-    );
+    if color {
+        println!(
+            "{} {} files  {} {} direct  {} {} deps  {}",
+            out.label("re-indexed"),
+            out.value(partitions.len()),
+            out.dim("→"),
+            out.dim(&plan.changed_files.len().to_string()),
+            out.dim("←"),
+            out.dim(&plan.reverse_dependencies.len().to_string()),
+            out.dim(&format_duration(started.elapsed()))
+        );
+    } else {
+        println!(
+            "re-indexed {} changed/dependent files ({} direct, {} reverse dependencies) in {}",
+            partitions.len(),
+            plan.changed_files.len(),
+            plan.reverse_dependencies.len(),
+            format_duration(started.elapsed())
+        );
+    }
     Ok(integrity)
 }
