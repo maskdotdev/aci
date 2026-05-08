@@ -232,6 +232,7 @@ pub fn is_vendor_or_generated(path: &Path) -> bool {
                     | "target"
                     | "dist"
                     | "build"
+                    | "third_party"
                     | "vendor"
                     | ".venv"
                     | "__pycache__"
@@ -321,6 +322,9 @@ mod tests {
         assert!(is_binary(b"a\0b"));
         assert!(is_vendor_or_generated(Path::new(
             "repo/node_modules/pkg/index.js"
+        )));
+        assert!(is_vendor_or_generated(Path::new(
+            "repo/third_party/pkg/index.js"
         )));
         assert!(is_vendor_or_generated(Path::new("repo/src/app.min.js")));
     }
