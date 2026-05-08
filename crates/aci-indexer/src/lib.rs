@@ -4,7 +4,7 @@ use aci_core::{
 };
 use ignore::WalkBuilder;
 use rayon::prelude::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -34,6 +34,19 @@ pub struct IndexReport {
     pub partitions: Vec<GraphPartition>,
     pub diagnostics: Vec<Diagnostic>,
     pub skipped: Vec<PathBuf>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct IndexSummary {
+    pub indexed_files: usize,
+    pub skipped_files: usize,
+    pub diagnostics: usize,
+    pub language_counts: BTreeMap<Language, usize>,
+    pub nodes: usize,
+    pub edges: usize,
+    pub parse_time_micros: u64,
+    pub extraction_time_micros: u64,
+    pub query_captures: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -95,6 +108,33 @@ impl IndexPipeline {
         })
     }
 
+    pub fn summarize_path(&self, options: IndexOptions) -> Result<IndexSummary> {
+        let root = options.root.canonicalize()?;
+        let repo_id = RepositoryId::new("repo", &[root.to_string_lossy().as_ref()]);
+        let candidates = discover_files(&root)?;
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(options.workers.max(1))
+            .build()
+            .map_err(|error| aci_core::AciError::Message(error.to_string()))?;
+        Ok(pool.install(|| {
+            candidates
+                .par_iter()
+                .map(|path| match self.index_file(&repo_id, &root, path) {
+                    Ok(Some(partition)) => IndexSummary::from(partition),
+                    Ok(None) => IndexSummary::default(),
+                    Err(FileSkip::Skipped(_)) => IndexSummary {
+                        skipped_files: 1,
+                        ..IndexSummary::default()
+                    },
+                    Err(FileSkip::Diagnostic(_)) => IndexSummary {
+                        diagnostics: 1,
+                        ..IndexSummary::default()
+                    },
+                })
+                .reduce(IndexSummary::default, IndexSummary::merge)
+        }))
+    }
+
     pub fn index_changed_paths(
         &self,
         root: &Path,
@@ -153,6 +193,41 @@ impl IndexPipeline {
         let mut partition = self.registry.extract(&source);
         partition.metrics.extraction_time_micros = started.elapsed().as_micros() as u64;
         Ok(Some(partition))
+    }
+}
+
+impl From<GraphPartition> for IndexSummary {
+    fn from(partition: GraphPartition) -> Self {
+        let mut language_counts = BTreeMap::new();
+        language_counts.insert(partition.language, 1);
+        Self {
+            indexed_files: 1,
+            skipped_files: 0,
+            diagnostics: partition.diagnostics.len(),
+            language_counts,
+            nodes: partition.nodes.len(),
+            edges: partition.edges.len(),
+            parse_time_micros: partition.metrics.parse_time_micros,
+            extraction_time_micros: partition.metrics.extraction_time_micros,
+            query_captures: partition.metrics.query_captures,
+        }
+    }
+}
+
+impl IndexSummary {
+    fn merge(mut self, other: Self) -> Self {
+        self.indexed_files += other.indexed_files;
+        self.skipped_files += other.skipped_files;
+        self.diagnostics += other.diagnostics;
+        self.nodes += other.nodes;
+        self.edges += other.edges;
+        self.parse_time_micros += other.parse_time_micros;
+        self.extraction_time_micros += other.extraction_time_micros;
+        self.query_captures += other.query_captures;
+        for (language, count) in other.language_counts {
+            *self.language_counts.entry(language).or_insert(0) += count;
+        }
+        self
     }
 }
 
@@ -315,6 +390,25 @@ mod tests {
                     node.name.as_deref() == Some("main") || node.name.as_deref() == Some("build")
                 })
         );
+    }
+
+    #[test]
+    fn summarizes_without_retaining_partitions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("app.ts"), "export function main() {}\n").expect("write ts");
+        fs::write(dir.path().join("tool.py"), "def build():\n    return 1\n").expect("write py");
+        fs::write(dir.path().join("bundle.min.js"), "minified();\n").expect("write generated");
+
+        let summary = IndexPipeline::default()
+            .summarize_path(IndexOptions::new(dir.path()))
+            .expect("summarize fixture");
+
+        assert_eq!(summary.indexed_files, 2);
+        assert_eq!(summary.skipped_files, 1);
+        assert_eq!(summary.language_counts.get(&Language::TypeScript), Some(&1));
+        assert_eq!(summary.language_counts.get(&Language::Python), Some(&1));
+        assert!(summary.nodes > 0);
+        assert!(summary.edges > 0);
     }
 
     #[test]

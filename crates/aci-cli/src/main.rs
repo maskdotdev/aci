@@ -6,7 +6,6 @@ use aci_query::QueryEngine;
 use aci_store::GraphStore;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use std::collections::BTreeMap;
 use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -262,49 +261,30 @@ fn bench(args: BenchArgs) -> Result<()> {
                 options.workers = workers;
             }
             let start = Instant::now();
-            let report = IndexPipeline::default().index_path(options)?;
+            let summary = IndexPipeline::default().summarize_path(options)?;
             let elapsed = start.elapsed().as_secs_f64();
-            let files = report.partitions.len().max(1);
-            let parse_micros = report
-                .partitions
-                .iter()
-                .map(|partition| partition.metrics.parse_time_micros)
-                .sum::<u64>();
-            let extraction_micros = report
-                .partitions
-                .iter()
-                .map(|partition| partition.metrics.extraction_time_micros)
-                .sum::<u64>();
-            let query_captures = report
-                .partitions
-                .iter()
-                .map(|partition| partition.metrics.query_captures)
-                .sum::<u64>();
-            let mut language_counts = BTreeMap::new();
-            for partition in &report.partitions {
-                *language_counts
-                    .entry(partition.language.as_str())
-                    .or_insert(0_usize) += 1;
-            }
+            let files = summary.indexed_files.max(1);
             println!("cold_index_variant={}", mode.as_str());
-            println!("cold_index_files={}", report.partitions.len());
-            println!("cold_skipped_files={}", report.skipped.len());
-            println!("cold_diagnostics={}", report.diagnostics.len());
+            println!("cold_index_files={}", summary.indexed_files);
+            println!("cold_skipped_files={}", summary.skipped_files);
+            println!("cold_diagnostics={}", summary.diagnostics);
+            println!("cold_nodes={}", summary.nodes);
+            println!("cold_edges={}", summary.edges);
             println!("cold_index_seconds={elapsed:.6}");
-            for (language, count) in language_counts {
-                println!("cold_language_{language}_files={count}");
+            for (language, count) in summary.language_counts {
+                println!("cold_language_{}_files={count}", language.as_str());
             }
             println!(
                 "cold_parse_seconds_per_file={:.9}",
-                parse_micros as f64 / 1_000_000.0 / files as f64
+                summary.parse_time_micros as f64 / 1_000_000.0 / files as f64
             );
             println!(
                 "cold_extraction_seconds_per_file={:.9}",
-                extraction_micros as f64 / 1_000_000.0 / files as f64
+                summary.extraction_time_micros as f64 / 1_000_000.0 / files as f64
             );
             println!(
                 "cold_query_captures_per_file={:.3}",
-                query_captures as f64 / files as f64
+                summary.query_captures as f64 / files as f64
             );
         }
         BenchCommand::Query {
