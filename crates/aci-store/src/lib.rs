@@ -8,18 +8,14 @@ use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-const VERSION: u32 = 1;
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
-    pub version: u32,
     pub partitions: BTreeMap<String, PartitionEntry>,
 }
 
 impl Default for Manifest {
     fn default() -> Self {
         Self {
-            version: VERSION,
             partitions: BTreeMap::new(),
         }
     }
@@ -44,7 +40,6 @@ pub enum DeltaRecord {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SymbolIndexEntry {
     pub file_id: Option<FileId>,
-    pub path: PathBuf,
     pub name: Option<String>,
     pub qualified_name: Option<String>,
     pub symbol_kind: Option<SymbolKind>,
@@ -64,7 +59,7 @@ pub struct GraphStore {
 
 pub struct PartitionWriter<'a> {
     store: &'a GraphStore,
-    manifest: Manifest,
+    manifest_jsonl: Option<ManifestJsonlWriter>,
     delta: Option<fs::File>,
     pack: Option<PartitionPack>,
     symbols: Option<SymbolIndexWriter>,
@@ -86,6 +81,22 @@ struct SymbolIndexWriter {
     final_path: PathBuf,
 }
 
+#[derive(Serialize)]
+struct BorrowedSymbolIndexEntry<'a> {
+    pub file_id: Option<&'a FileId>,
+    pub name: Option<&'a str>,
+    pub qualified_name: Option<&'a str>,
+    pub symbol_kind: Option<SymbolKind>,
+    pub provenance: FactProvenance,
+    pub confidence: Confidence,
+}
+
+struct ManifestJsonlWriter {
+    writer: BufWriter<fs::File>,
+    tmp_path: PathBuf,
+    final_path: PathBuf,
+}
+
 impl GraphStore {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
@@ -98,23 +109,9 @@ impl GraphStore {
     }
 
     pub fn write_partition(&self, partition: &GraphPartition) -> Result<()> {
-        let relative = self.write_partition_file(partition)?;
-        self.append_delta(&DeltaRecord::ReplacePartition {
-            partition: partition.clone(),
-        })?;
-
-        let mut manifest = self.read_manifest().unwrap_or_default();
-        manifest.partitions.insert(
-            partition.file_id.to_string(),
-            PartitionEntry {
-                file_id: partition.file_id.to_string(),
-                path: partition.path.clone(),
-                fingerprint: partition.fingerprint.clone(),
-                partition_file: PathBuf::from("partitions").join(relative),
-                record_index: None,
-            },
-        );
-        self.write_manifest(&manifest)
+        let mut writer = self.replace_partitions_writer()?;
+        writer.write(partition)?;
+        writer.finish().map(|_| ())
     }
 
     pub fn replace_all_writer(&self) -> Result<PartitionWriter<'_>> {
@@ -122,9 +119,15 @@ impl GraphStore {
         let tmp_path = final_path.with_extension("jsonl.tmp");
         let symbols_final_path = self.root.join("symbols.jsonl");
         let symbols_tmp_path = symbols_final_path.with_extension("jsonl.tmp");
+        let manifest_final_path = self.root.join("manifest.jsonl");
+        let manifest_tmp_path = manifest_final_path.with_extension("jsonl.tmp");
         Ok(PartitionWriter {
             store: self,
-            manifest: Manifest::default(),
+            manifest_jsonl: Some(ManifestJsonlWriter {
+                writer: BufWriter::new(fs::File::create(&manifest_tmp_path)?),
+                tmp_path: manifest_tmp_path,
+                final_path: manifest_final_path,
+            }),
             delta: None,
             pack: Some(PartitionPack {
                 writer: BufWriter::new(fs::File::create(&tmp_path)?),
@@ -146,7 +149,7 @@ impl GraphStore {
     pub fn replace_partitions_writer(&self) -> Result<PartitionWriter<'_>> {
         Ok(PartitionWriter {
             store: self,
-            manifest: self.read_manifest().unwrap_or_default(),
+            manifest_jsonl: Some(self.manifest_jsonl_writer()?),
             delta: Some(
                 OpenOptions::new()
                     .create(true)
@@ -202,12 +205,11 @@ impl GraphStore {
     }
 
     pub fn read_manifest(&self) -> Result<Manifest> {
-        let path = self.root.join("manifest.json");
-        if path.exists() {
-            read_json(&path)
-        } else {
-            Ok(Manifest::default())
+        let mut manifest = Manifest::default();
+        for entry in self.read_manifest_jsonl()? {
+            manifest.partitions.insert(entry.file_id.clone(), entry);
         }
+        Ok(manifest)
     }
 
     pub fn integrity_check(&self) -> Result<Vec<String>> {
@@ -290,8 +292,39 @@ impl GraphStore {
         Ok(Some(selected.into_values().collect()))
     }
 
-    fn write_manifest(&self, manifest: &Manifest) -> Result<()> {
-        write_json_atomic(&self.root.join("manifest.json"), manifest)
+    fn read_manifest_jsonl(&self) -> Result<Vec<PartitionEntry>> {
+        let path = self.root.join("manifest.jsonl");
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let reader = BufReader::new(fs::File::open(path)?);
+        reader
+            .lines()
+            .filter(|line| {
+                line.as_ref()
+                    .map(|line| !line.trim().is_empty())
+                    .unwrap_or(true)
+            })
+            .map(|line| {
+                let line = line?;
+                Ok(serde_json::from_str(&line)?)
+            })
+            .collect()
+    }
+
+    fn manifest_jsonl_writer(&self) -> Result<ManifestJsonlWriter> {
+        let final_path = self.root.join("manifest.jsonl");
+        let tmp_path = final_path.with_extension("jsonl.tmp");
+        let mut writer = BufWriter::new(fs::File::create(&tmp_path)?);
+        for entry in self.read_manifest()?.partitions.into_values() {
+            serde_json::to_writer(&mut writer, &entry)?;
+            writeln!(writer)?;
+        }
+        Ok(ManifestJsonlWriter {
+            writer,
+            tmp_path,
+            final_path,
+        })
     }
 
     fn write_partition_file(&self, partition: &GraphPartition) -> Result<PathBuf> {
@@ -299,16 +332,6 @@ impl GraphStore {
         let path = self.root.join("partitions").join(&relative);
         write_json_atomic_unsynced(&path, partition)?;
         Ok(relative)
-    }
-
-    fn append_delta(&self, record: &DeltaRecord) -> Result<()> {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.root.join("delta.jsonl"))?;
-        serde_json::to_writer(&mut file, record)?;
-        writeln!(file)?;
-        Ok(())
     }
 
     fn read_delta_log(&self) -> Result<Vec<DeltaRecord>> {
@@ -380,16 +403,17 @@ impl PartitionWriter<'_> {
             )?;
             writeln!(delta)?;
         }
-        self.manifest.partitions.insert(
-            partition.file_id.to_string(),
-            PartitionEntry {
-                file_id: partition.file_id.to_string(),
-                path: partition.path.clone(),
-                fingerprint: partition.fingerprint.clone(),
-                partition_file,
-                record_index,
-            },
-        );
+        let entry = PartitionEntry {
+            file_id: partition.file_id.to_string(),
+            path: partition.path.clone(),
+            fingerprint: partition.fingerprint.clone(),
+            partition_file,
+            record_index,
+        };
+        if let Some(manifest_jsonl) = &mut self.manifest_jsonl {
+            serde_json::to_writer(&mut manifest_jsonl.writer, &entry)?;
+            writeln!(manifest_jsonl.writer)?;
+        }
         if let Some(symbols) = &mut self.symbols {
             for node in partition
                 .nodes
@@ -398,11 +422,10 @@ impl PartitionWriter<'_> {
             {
                 serde_json::to_writer(
                     &mut symbols.writer,
-                    &SymbolIndexEntry {
-                        file_id: node.file_id.clone(),
-                        path: partition.path.clone(),
-                        name: node.name.clone(),
-                        qualified_name: node.qualified_name.clone(),
+                    &BorrowedSymbolIndexEntry {
+                        file_id: node.file_id.as_ref(),
+                        name: node.name.as_deref(),
+                        qualified_name: node.qualified_name.as_deref(),
                         symbol_kind: node.symbol_kind,
                         provenance: node.provenance,
                         confidence: node.confidence,
@@ -426,7 +449,11 @@ impl PartitionWriter<'_> {
             drop(symbols.writer);
             fs::rename(symbols.tmp_path, symbols.final_path)?;
         }
-        self.store.write_manifest(&self.manifest)?;
+        if let Some(mut manifest_jsonl) = self.manifest_jsonl.take() {
+            manifest_jsonl.writer.flush()?;
+            drop(manifest_jsonl.writer);
+            fs::rename(manifest_jsonl.tmp_path, manifest_jsonl.final_path)?;
+        }
         if self.replace_all {
             let snapshot = self.store.root.join("snapshot.json");
             if snapshot.exists() {
@@ -679,6 +706,8 @@ mod tests {
         assert_eq!(writer.finish().expect("finish writer"), 1);
 
         assert!(!store.root().join("snapshot.json").exists());
+        assert!(!store.root().join("manifest.json").exists());
+        assert!(store.root().join("manifest.jsonl").exists());
         assert!(store.root().join("partitions/pack-00000.jsonl").exists());
         assert_eq!(
             store
@@ -702,7 +731,7 @@ mod tests {
             .expect("symbol index")
             .expect("symbol index exists");
         assert_eq!(symbols.len(), 1);
-        assert_eq!(symbols[0].path, replacement.path);
+        assert_eq!(symbols[0].file_id.as_ref(), Some(&replacement.file_id));
         let latest = store.load_latest().expect("load latest");
         assert_eq!(latest.partitions.len(), 1);
         assert_eq!(latest.partitions[0].fingerprint, replacement.fingerprint);

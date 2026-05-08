@@ -45,6 +45,8 @@ pub struct IndexSummary {
     pub language_counts: BTreeMap<Language, usize>,
     pub nodes: usize,
     pub edges: usize,
+    pub max_nodes_per_file: usize,
+    pub max_edges_per_file: usize,
     pub parse_time_micros: u64,
     pub extraction_time_micros: u64,
     pub query_captures: u64,
@@ -264,6 +266,8 @@ impl From<GraphPartition> for IndexSummary {
             language_counts,
             nodes: partition.nodes.len(),
             edges: partition.edges.len(),
+            max_nodes_per_file: partition.nodes.len(),
+            max_edges_per_file: partition.edges.len(),
             parse_time_micros: partition.metrics.parse_time_micros,
             extraction_time_micros: partition.metrics.extraction_time_micros,
             query_captures: partition.metrics.query_captures,
@@ -277,6 +281,8 @@ impl IndexSummary {
         self.diagnostics += partition.diagnostics.len();
         self.nodes += partition.nodes.len();
         self.edges += partition.edges.len();
+        self.max_nodes_per_file = self.max_nodes_per_file.max(partition.nodes.len());
+        self.max_edges_per_file = self.max_edges_per_file.max(partition.edges.len());
         self.parse_time_micros += partition.metrics.parse_time_micros;
         self.extraction_time_micros += partition.metrics.extraction_time_micros;
         self.query_captures += partition.metrics.query_captures;
@@ -289,6 +295,8 @@ impl IndexSummary {
         self.diagnostics += other.diagnostics;
         self.nodes += other.nodes;
         self.edges += other.edges;
+        self.max_nodes_per_file = self.max_nodes_per_file.max(other.max_nodes_per_file);
+        self.max_edges_per_file = self.max_edges_per_file.max(other.max_edges_per_file);
         self.parse_time_micros += other.parse_time_micros;
         self.extraction_time_micros += other.extraction_time_micros;
         self.query_captures += other.query_captures;

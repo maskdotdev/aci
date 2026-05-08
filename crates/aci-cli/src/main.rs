@@ -291,6 +291,8 @@ fn bench(args: BenchArgs) -> Result<()> {
             println!("cold_diagnostics={}", summary.diagnostics);
             println!("cold_nodes={}", summary.nodes);
             println!("cold_edges={}", summary.edges);
+            println!("cold_max_nodes_per_file={}", summary.max_nodes_per_file);
+            println!("cold_max_edges_per_file={}", summary.max_edges_per_file);
             println!("cold_index_seconds={elapsed:.6}");
             for (language, count) in summary.language_counts {
                 println!("cold_language_{}_files={count}", language.as_str());
