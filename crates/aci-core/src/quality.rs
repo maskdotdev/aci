@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum FactProvenance {
+    #[default]
     StructuralScanner,
     TreeSitter,
     Scip,
@@ -24,25 +27,16 @@ impl FactProvenance {
     }
 }
 
-impl Default for FactProvenance {
-    fn default() -> Self {
-        Self::StructuralScanner
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum Confidence {
     Low,
+    #[default]
     Medium,
     High,
     Exact,
-}
-
-impl Default for Confidence {
-    fn default() -> Self {
-        Self::Medium
-    }
 }
 
 pub fn prefer_fact(

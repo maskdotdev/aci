@@ -12,10 +12,10 @@ pub fn scanner_extract_typescript(file: &SourceFile) -> GraphPartition {
         let trimmed = line.trim();
         let span = line_span(&file.text, line_index);
 
-        if trimmed.starts_with("import ") || trimmed.contains(" require(") {
-            if let Some(module) = module_specifier(trimmed) {
-                builder.add_import(module, span.clone());
-            }
+        if (trimmed.starts_with("import ") || trimmed.contains(" require("))
+            && let Some(module) = module_specifier(trimmed)
+        {
+            builder.add_import(module, span.clone());
         }
         if trimmed.starts_with("export ") {
             let name = export_name(trimmed).unwrap_or("default");

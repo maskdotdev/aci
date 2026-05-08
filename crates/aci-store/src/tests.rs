@@ -162,7 +162,7 @@ fn dependency_index_plans_incremental_reverse_dependencies() {
     writer.finish().expect("finish writer");
 
     let plan = store
-        .plan_incremental_reindex(&[lib.path.clone()])
+        .plan_incremental_reindex(std::slice::from_ref(&lib.path))
         .expect("plan")
         .expect("dependency index exists");
     assert_eq!(plan.changed_files, vec![lib.path]);
