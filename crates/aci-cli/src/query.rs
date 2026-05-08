@@ -301,12 +301,11 @@ fn display_path_string(path: &Path, display_root: Option<&Path>) -> String {
 }
 
 fn display_path<'a>(path: &'a Path, display_root: Option<&Path>) -> Cow<'a, Path> {
-    if let Some(root) = display_root {
-        if let Ok(relative) = path.strip_prefix(root) {
-            if !relative.as_os_str().is_empty() {
-                return Cow::Owned(relative.to_path_buf());
-            }
-        }
+    if let Some(root) = display_root
+        && let Ok(relative) = path.strip_prefix(root)
+        && !relative.as_os_str().is_empty()
+    {
+        return Cow::Owned(relative.to_path_buf());
     }
     Cow::Borrowed(path)
 }
