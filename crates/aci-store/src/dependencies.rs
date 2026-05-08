@@ -1,22 +1,15 @@
 use aci_core::{GraphNode, GraphPartition, NodeKind, Result};
 use std::collections::{BTreeSet, HashMap};
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 pub(crate) struct DependencyIndexWriter {
-    mode: DependencyWriterMode,
+    tmp_root: PathBuf,
+    final_root: PathBuf,
+    path_writer: BufWriter<fs::File>,
+    paths: HashMap<PathBuf, u32>,
     shards: HashMap<u8, DependencyShardWriter>,
-}
-
-enum DependencyWriterMode {
-    ReplaceAll {
-        tmp_root: PathBuf,
-        final_root: PathBuf,
-    },
-    Append {
-        root: PathBuf,
-    },
 }
 
 struct DependencyShardWriter {
@@ -38,20 +31,12 @@ impl DependencyIndexWriter {
             fs::remove_dir_all(&tmp_root)?;
         }
         fs::create_dir_all(&tmp_root)?;
+        let path_writer = BufWriter::new(fs::File::create(tmp_root.join("paths.tsv"))?);
         Ok(Self {
-            mode: DependencyWriterMode::ReplaceAll {
-                tmp_root,
-                final_root,
-            },
-            shards: HashMap::new(),
-        })
-    }
-
-    pub(crate) fn copy_existing(root: &Path) -> Result<Self> {
-        let final_root = root.join("deps");
-        fs::create_dir_all(&final_root)?;
-        Ok(Self {
-            mode: DependencyWriterMode::Append { root: final_root },
+            tmp_root,
+            final_root,
+            path_writer,
+            paths: HashMap::new(),
             shards: HashMap::new(),
         })
     }
@@ -63,62 +48,58 @@ impl DependencyIndexWriter {
     ) -> Result<()> {
         import_stems.sort();
         import_stems.dedup();
+        let path_index = self.intern_path(&partition.path)?;
         for stem in import_stems {
             let writer = self.open_shard(shard_for_stem(&stem))?;
             writer.writer.write_all(stem.as_bytes())?;
             writer.writer.write_all(b"\t")?;
-            write!(writer.writer, "{}", partition.path.display())?;
+            write!(writer.writer, "{path_index}")?;
             writeln!(writer.writer)?;
         }
         Ok(())
     }
 
-    pub(crate) fn finish(self) -> Result<()> {
+    pub(crate) fn finish(mut self) -> Result<()> {
+        self.path_writer.flush()?;
+        drop(self.path_writer);
         for shard in self.shards.into_values() {
             let mut writer = shard.writer;
             writer.flush()?;
         }
-        match self.mode {
-            DependencyWriterMode::ReplaceAll {
-                tmp_root,
-                final_root,
-            } => {
-                if final_root.exists() {
-                    fs::remove_dir_all(&final_root)?;
-                }
-                let legacy = final_root.with_file_name("deps.tsv");
-                if legacy.exists() {
-                    fs::remove_file(legacy)?;
-                }
-                let jsonl_legacy = final_root.with_file_name("deps.jsonl");
-                if jsonl_legacy.exists() {
-                    fs::remove_file(jsonl_legacy)?;
-                }
-                fs::rename(tmp_root, final_root)?;
-            }
-            DependencyWriterMode::Append { .. } => {}
+        if self.final_root.exists() {
+            fs::remove_dir_all(&self.final_root)?;
         }
+        let legacy = self.final_root.with_file_name("deps.tsv");
+        if legacy.exists() {
+            fs::remove_file(legacy)?;
+        }
+        let jsonl_legacy = self.final_root.with_file_name("deps.jsonl");
+        if jsonl_legacy.exists() {
+            fs::remove_file(jsonl_legacy)?;
+        }
+        fs::rename(self.tmp_root, self.final_root)?;
         Ok(())
+    }
+
+    fn intern_path(&mut self, path: &Path) -> Result<u32> {
+        if let Some(index) = self.paths.get(path) {
+            return Ok(*index);
+        }
+        let index = u32::try_from(self.paths.len()).map_err(|_| {
+            aci_core::AciError::Message("dependency index has too many paths".to_string())
+        })?;
+        writeln!(self.path_writer, "{}", path.display())?;
+        self.paths.insert(path.to_path_buf(), index);
+        Ok(index)
     }
 
     fn open_shard(&mut self, shard: u8) -> Result<&mut DependencyShardWriter> {
         if !self.shards.contains_key(&shard) {
-            let path = match &self.mode {
-                DependencyWriterMode::ReplaceAll { tmp_root, .. } => {
-                    tmp_root.join(shard_filename(shard))
-                }
-                DependencyWriterMode::Append { root } => root.join(shard_filename(shard)),
-            };
-            let file = match self.mode {
-                DependencyWriterMode::ReplaceAll { .. } => fs::File::create(path)?,
-                DependencyWriterMode::Append { .. } => {
-                    OpenOptions::new().create(true).append(true).open(path)?
-                }
-            };
+            let path = self.tmp_root.join(shard_filename(shard));
             self.shards.insert(
                 shard,
                 DependencyShardWriter {
-                    writer: BufWriter::new(file),
+                    writer: BufWriter::new(fs::File::create(path)?),
                 },
             );
         }
@@ -157,13 +138,14 @@ pub(crate) fn plan(root: &Path, changed_paths: &[PathBuf]) -> Result<Option<Stor
                 .map(|stem| stem.to_string_lossy().to_string())
         })
         .collect::<BTreeSet<_>>();
+    let paths = read_paths(&index_root)?;
     let mut reverse_dependencies = BTreeSet::new();
     for stem in changed_stems {
         let shard = index_root.join(shard_filename(shard_for_stem(&stem)));
         if !shard.exists() {
             continue;
         }
-        read_reverse_shard(&shard, &stem, &changed, &mut reverse_dependencies)?;
+        read_reverse_shard(&shard, &stem, &paths, &changed, &mut reverse_dependencies)?;
     }
     let mut files_to_reindex = changed.clone();
     files_to_reindex.extend(reverse_dependencies.iter().cloned());
@@ -174,28 +156,42 @@ pub(crate) fn plan(root: &Path, changed_paths: &[PathBuf]) -> Result<Option<Stor
     }))
 }
 
+fn read_paths(root: &Path) -> Result<Vec<PathBuf>> {
+    let reader = BufReader::new(fs::File::open(root.join("paths.tsv"))?);
+    reader
+        .lines()
+        .map(|line| Ok(PathBuf::from(line?)))
+        .collect()
+}
+
 fn read_reverse_shard(
     path: &Path,
     stem: &str,
+    paths: &[PathBuf],
     changed: &BTreeSet<PathBuf>,
     reverse_dependencies: &mut BTreeSet<PathBuf>,
 ) -> Result<()> {
     let reader = BufReader::new(fs::File::open(path)?);
     for line in reader.lines() {
         let line = line?;
-        let Some((line_stem, path)) = parse_reverse_entry(&line) else {
+        let Some((line_stem, path_index)) = parse_reverse_entry(&line) else {
             continue;
         };
-        if line_stem == stem && !changed.contains(&path) {
-            reverse_dependencies.insert(path);
+        if line_stem != stem {
+            continue;
+        }
+        if let Some(path) = paths.get(path_index)
+            && !changed.contains(path)
+        {
+            reverse_dependencies.insert(path.clone());
         }
     }
     Ok(())
 }
 
-fn parse_reverse_entry(line: &str) -> Option<(&str, PathBuf)> {
-    let (stem, path) = line.split_once('\t')?;
-    Some((stem, PathBuf::from(path)))
+fn parse_reverse_entry(line: &str) -> Option<(&str, usize)> {
+    let (stem, path_index) = line.split_once('\t')?;
+    Some((stem, path_index.parse().ok()?))
 }
 
 fn shard_for_stem(stem: &str) -> u8 {

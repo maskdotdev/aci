@@ -145,9 +145,7 @@ impl GraphStore {
             ),
             pack: None,
             symbols: None,
-            dependencies: Some(dependencies::DependencyIndexWriter::copy_existing(
-                &self.root,
-            )?),
+            dependencies: None,
             replace_all: false,
             written: 0,
         })
