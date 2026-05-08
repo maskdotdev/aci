@@ -479,11 +479,7 @@ mod tests {
             symbol_qualified_names(&left),
             symbol_qualified_names(&right)
         );
-        assert!(
-            symbol_qualified_names(&left)
-                .iter()
-                .any(|name| *name == "coverage::Service")
-        );
+        assert!(symbol_qualified_names(&left).contains(&"coverage::Service"));
         assert!(left.edges.iter().any(|edge| edge.kind == EdgeKind::Calls));
     }
 

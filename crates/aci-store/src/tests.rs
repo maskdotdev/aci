@@ -1,5 +1,9 @@
 use super::*;
-use aci_core::{GraphNode, Language, NodeKind, RepositoryId, SourceFile};
+use aci_core::{
+    Confidence, Diagnostic, EdgeKind, FactProvenance, GraphEdge, GraphNode, GraphPartition,
+    GraphSnapshot, Language, LineColumn, NodeId, NodeKind, PartitionMetrics, RepositoryId,
+    Severity, SourceFile, SourceSpan,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -155,6 +159,111 @@ fn packed_partition_records_use_compact_shape() {
     assert!(!String::from_utf8_lossy(&pack).contains("\"file_id\""));
     let latest = store.load_latest().expect("load latest");
     assert_eq!(latest.partitions, vec![replacement]);
+}
+
+#[test]
+fn packed_partition_binary_preserves_rich_partition_shape() {
+    let mut replacement = partition("rich");
+    replacement.metrics = PartitionMetrics {
+        parse_time_micros: 11,
+        extraction_time_micros: 22,
+        query_captures: 33,
+    };
+    replacement.nodes[1] = replacement.nodes[1]
+        .clone()
+        .with_fact_quality(FactProvenance::TreeSitter, Confidence::Exact);
+    replacement.diagnostics.push(Diagnostic {
+        severity: Severity::Warning,
+        message: "syntax recovered".to_string(),
+        file_id: Some(replacement.file_id.clone()),
+        span: Some(SourceSpan::new(
+            1,
+            3,
+            LineColumn::new(1, 2),
+            LineColumn::new(1, 4),
+        )),
+    });
+    replacement.edges.push(GraphEdge::deterministic(
+        EdgeKind::References,
+        &replacement.nodes[0].id,
+        &replacement.nodes[1].id,
+        Some(SourceSpan::new(
+            4,
+            5,
+            LineColumn::new(1, 5),
+            LineColumn::new(1, 6),
+        )),
+    ));
+
+    let mut encoded = Vec::new();
+    compact::write_partition_binary(&mut encoded, &replacement).expect("encode partition");
+    let decoded = compact::read_partition_binary(&mut encoded.as_slice())
+        .expect("decode partition")
+        .expect("partition record");
+
+    assert_eq!(decoded, replacement);
+}
+
+#[test]
+fn partition_file_check_reports_missing_packed_record() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = GraphStore::open(dir.path()).expect("open store");
+    let replacement = partition("compact");
+    let mut writer = store.replace_all_writer().expect("open writer");
+    writer.write(&replacement).expect("write replacement");
+    writer.finish().expect("finish writer");
+
+    let mut manifest = store.read_manifest().expect("manifest");
+    let entry = manifest
+        .partitions
+        .values_mut()
+        .next()
+        .expect("manifest entry");
+    entry.record_index = Some(1);
+    let mut manifest_jsonl = String::new();
+    for entry in manifest.partitions.values() {
+        manifest_jsonl.push_str(&serde_json::to_string(entry).expect("serialize entry"));
+        manifest_jsonl.push('\n');
+    }
+    fs::write(store.root().join("manifest.jsonl"), manifest_jsonl).expect("rewrite manifest");
+
+    let problems = store
+        .partition_file_check()
+        .expect("partition file check should complete");
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.contains("missing packed record 1"))
+    );
+}
+
+#[test]
+fn load_latest_rejects_invalid_pack_header() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = GraphStore::open(dir.path()).expect("open store");
+    let replacement = partition("compact");
+    let entry = PartitionEntry {
+        file_id: replacement.file_id.to_string(),
+        path: replacement.path.clone(),
+        fingerprint: replacement.fingerprint.clone(),
+        partition_file: PathBuf::from("partitions").join("pack-00000.bin"),
+        record_index: Some(0),
+    };
+    fs::write(
+        store.root().join("manifest.jsonl"),
+        format!("{}\n", serde_json::to_string(&entry).expect("entry json")),
+    )
+    .expect("write manifest");
+    fs::write(
+        store.root().join("partitions/pack-00000.bin"),
+        b"not-an-aci-pack",
+    )
+    .expect("write invalid pack");
+
+    let error = store
+        .load_latest()
+        .expect_err("invalid pack header should fail");
+    assert!(error.to_string().contains("invalid header"));
 }
 
 #[test]

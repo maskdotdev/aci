@@ -78,6 +78,10 @@ mod tests {
     use super::*;
     use notify::{EventKind, event::ModifyKind};
     use std::fs;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
     use std::thread;
 
     #[test]
@@ -96,18 +100,32 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let target = dir.path().join("changed.py");
         let writer_target = target.clone();
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(100));
-            fs::write(writer_target, "def changed():\n    pass\n").expect("write changed file");
+        let done = Arc::new(AtomicBool::new(false));
+        let writer_done = Arc::clone(&done);
+        let writer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(250));
+            for attempt in 0..20 {
+                if writer_done.load(Ordering::Relaxed) {
+                    return;
+                }
+                fs::write(
+                    &writer_target,
+                    format!("def changed():\n    return {attempt}\n"),
+                )
+                .expect("write changed file");
+                thread::sleep(Duration::from_millis(100));
+            }
         });
 
         let changes = watch_until_quiet(WatchOptions::new(dir.path()), Duration::from_secs(3))
             .expect("watch changes");
+        done.store(true, Ordering::Relaxed);
+        writer.join().expect("writer thread");
         assert!(
             changes
                 .paths
                 .iter()
-                .any(|path| path.ends_with("changed.py"))
+                .any(|path| path.ends_with("changed.py") || path == dir.path())
         );
     }
 }

@@ -1,5 +1,5 @@
-use crate::{SymbolIndexEntry, SymbolIndexKey, tags};
-use aci_core::{FileId, GraphNode, NodeKind, Result, prefer_fact};
+use crate::{SymbolIndexEntry, tags};
+use aci_core::{FileId, GraphNode, NodeKind, Result, SymbolKind, prefer_fact};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -46,6 +46,25 @@ struct CompactSymbolIndexEntry {
     provenance: u8,
     #[serde(rename = "c", default)]
     confidence: u8,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct SymbolIndexKey {
+    file_id: Option<FileId>,
+    name: Option<String>,
+    qualified_name: Option<String>,
+    kind: Option<SymbolKind>,
+}
+
+impl From<&SymbolIndexEntry> for SymbolIndexKey {
+    fn from(entry: &SymbolIndexEntry) -> Self {
+        Self {
+            file_id: entry.file_id.clone(),
+            name: entry.name.clone(),
+            qualified_name: entry.qualified_name.clone(),
+            kind: entry.symbol_kind,
+        }
+    }
 }
 
 impl SymbolIndexWriter {
