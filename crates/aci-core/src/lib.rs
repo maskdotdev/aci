@@ -67,8 +67,13 @@ pub type PackageId = Id<PackageTag>;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Language {
+    C,
+    Cpp,
+    Go,
     JavaScript,
     Json,
+    Java,
+    ObjectiveC,
     TypeScript,
     Python,
     Rust,
@@ -78,8 +83,13 @@ pub enum Language {
 impl Language {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::C => "c",
+            Self::Cpp => "cpp",
+            Self::Go => "go",
             Self::JavaScript => "javascript",
             Self::Json => "json",
+            Self::Java => "java",
+            Self::ObjectiveC => "objective-c",
             Self::TypeScript => "typescript",
             Self::Python => "python",
             Self::Rust => "rust",

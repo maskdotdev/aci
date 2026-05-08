@@ -267,6 +267,26 @@ pub fn python_language() -> TreeSitterLanguage {
     tree_sitter_python::LANGUAGE.into()
 }
 
+pub fn c_language() -> TreeSitterLanguage {
+    tree_sitter_c::LANGUAGE.into()
+}
+
+pub fn cpp_language() -> TreeSitterLanguage {
+    tree_sitter_cpp::LANGUAGE.into()
+}
+
+pub fn go_language() -> TreeSitterLanguage {
+    tree_sitter_go::LANGUAGE.into()
+}
+
+pub fn java_language() -> TreeSitterLanguage {
+    tree_sitter_java::LANGUAGE.into()
+}
+
+pub fn objective_c_language() -> TreeSitterLanguage {
+    tree_sitter_objc::LANGUAGE.into()
+}
+
 pub fn rust_language() -> TreeSitterLanguage {
     tree_sitter_rust::LANGUAGE.into()
 }

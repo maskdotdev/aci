@@ -26,6 +26,11 @@ impl AdapterRegistry {
 
     pub fn with_defaults() -> Self {
         Self::new()
+            .register(languages::objective_c::ObjectiveCAdapter)
+            .register(languages::cpp::CppAdapter)
+            .register(languages::c::CAdapter)
+            .register(languages::go::GoAdapter)
+            .register(languages::java::JavaAdapter)
             .register(languages::json::JsonAdapter)
             .register(languages::rust::RustAdapter)
             .register(languages::typescript::JavaScriptAdapter)
