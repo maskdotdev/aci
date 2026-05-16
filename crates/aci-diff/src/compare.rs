@@ -1,11 +1,13 @@
 use crate::{
     ChangeKind, ChangedSymbol, DependencyChange, DiffDiagnostic, DiffReport, FileChange,
     ImpactedFile, IndexedRef, RefSide, RefSummary, RiskLevel, SymbolSummary,
+    labels::{change_label, edge_impact_label, edge_kind_label},
     stats::{StatsInput, stats},
+    symbol_identity::{SymbolKey, symbol_key},
 };
 use aci_core::{
-    EdgeKind, FileId, GraphNode, GraphPartition, GraphSnapshot, Language, NodeId, NodeKind,
-    SourceSpan, SymbolKind, normalize_path,
+    EdgeKind, FileId, GraphNode, GraphPartition, GraphSnapshot, NodeId, NodeKind, SourceSpan,
+    normalize_path,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -125,14 +127,6 @@ impl<'a> SnapshotIndex<'a> {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-struct SymbolKey {
-    file: String,
-    language: Language,
-    kind: Option<SymbolKind>,
-    name: String,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SymbolEntry {
     summary: SymbolSummary,
@@ -182,7 +176,6 @@ fn build_symbols(
                 .clone()
                 .or_else(|| node.name.clone())
                 .unwrap_or_default();
-            let key_name = node.name.clone().unwrap_or_else(|| display_name.clone());
             let source_hash = source
                 .as_deref()
                 .and_then(|text| node.span.as_ref().and_then(|span| span_hash(text, span)));
@@ -190,12 +183,7 @@ fn build_symbols(
                 .as_deref()
                 .and_then(|text| node.span.as_ref().and_then(|span| span_text(text, span)));
             let public_api = is_public_api(node, &exports, snippet);
-            let key = SymbolKey {
-                file: comparison_file.clone(),
-                language: node.language,
-                kind: node.symbol_kind,
-                name: key_name,
-            };
+            let key = symbol_key(node, comparison_file.clone());
             let summary = SymbolSummary {
                 name: node.name.clone().unwrap_or_else(|| display_name.clone()),
                 qualified_name: node.qualified_name.clone(),
@@ -207,10 +195,14 @@ fn build_symbols(
             let entry = SymbolEntry {
                 summary,
                 fingerprint: SymbolFingerprint {
-                    span: node.span.clone(),
+                    span: if source_hash.is_none() {
+                        node.span.clone()
+                    } else {
+                        None
+                    },
                     source_hash,
-                    provenance: format!("{:?}", node.provenance),
-                    confidence: format!("{:?}", node.confidence),
+                    provenance: provenance_label(node.provenance),
+                    confidence: confidence_label(node.confidence),
                 },
                 public_api,
             };
@@ -236,7 +228,7 @@ fn build_dependencies(
                 let key = DependencyKey {
                     file: comparison_file.clone(),
                     dependency: dependency.clone(),
-                    edge_kind: format!("{:?}", edge.kind),
+                    edge_kind: edge_kind_label(edge.kind).to_string(),
                 };
                 dependencies.insert(
                     key,
@@ -399,7 +391,7 @@ fn add_impacts_from_edges(
                 .unwrap_or_else(|| relative_path(index.root, &partition.path));
             impacted.entry(file).or_default().insert(format!(
                 "{} {}",
-                edge_label(edge.kind),
+                edge_impact_label(edge.kind),
                 label
             ));
         }
@@ -524,23 +516,24 @@ fn risk_for(change: ChangeKind, public_api: bool) -> RiskLevel {
     }
 }
 
-fn change_label(change: ChangeKind) -> &'static str {
-    match change {
-        ChangeKind::Added => "added",
-        ChangeKind::Removed => "removed",
-        ChangeKind::Modified => "modified",
-        ChangeKind::Renamed => "renamed",
-        ChangeKind::TypeChanged => "type-changed",
-        ChangeKind::Copied => "copied",
+fn provenance_label(provenance: aci_core::FactProvenance) -> String {
+    match provenance {
+        aci_core::FactProvenance::StructuralScanner => "structural-scanner",
+        aci_core::FactProvenance::TreeSitter => "tree-sitter",
+        aci_core::FactProvenance::Scip => "scip",
+        aci_core::FactProvenance::Lsp => "lsp",
+        aci_core::FactProvenance::Compiler => "compiler",
+        aci_core::FactProvenance::Manual => "manual",
     }
+    .to_string()
 }
 
-fn edge_label(kind: EdgeKind) -> &'static str {
-    match kind {
-        EdgeKind::Imports => "imports",
-        EdgeKind::DependsOn => "depends on",
-        EdgeKind::Calls => "calls",
-        EdgeKind::References => "references",
-        _ => "uses",
+fn confidence_label(confidence: aci_core::Confidence) -> String {
+    match confidence {
+        aci_core::Confidence::Low => "low",
+        aci_core::Confidence::Medium => "medium",
+        aci_core::Confidence::High => "high",
+        aci_core::Confidence::Exact => "exact",
     }
+    .to_string()
 }

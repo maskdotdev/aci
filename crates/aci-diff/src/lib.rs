@@ -5,13 +5,16 @@
 
 mod compare;
 mod git;
+mod labels;
 mod report;
 mod stats;
+mod symbol_identity;
 
 use aci_core::{GraphSnapshot, Result};
 use aci_indexer::{IndexOptions, IndexPipeline};
 use std::path::PathBuf;
 
+pub use labels::{edge_kind_label, ref_side_label, risk_label, symbol_kind_label};
 pub use report::{
     ChangeKind, ChangedSymbol, DependencyChange, DiffDiagnostic, DiffReport, DiffStats, FileChange,
     ImpactedFile, RefSide, RefSummary, RiskLevel, SymbolSummary,

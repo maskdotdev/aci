@@ -131,6 +131,51 @@ fn reports_dependency_changes_and_head_diagnostics() {
     );
 }
 
+#[test]
+fn does_not_collapse_same_named_methods_in_one_file() {
+    let repo = fixture_repo();
+    write(
+        repo.path().join("src/lib.ts"),
+        "export class A { run() { return 1; } }\nexport class B { run() { return 2; } }\n",
+    );
+    commit_all(repo.path(), "base");
+
+    git(repo.path(), ["checkout", "-b", "feature"]);
+    write(
+        repo.path().join("src/lib.ts"),
+        "export class A { run() { return 99; } }\nexport class B { run() { return 2; } }\n",
+    );
+    commit_all(repo.path(), "head");
+
+    let report = diff_refs(DiffOptions::new("main", "feature").with_repo_root(repo.path()))
+        .expect("diff refs");
+
+    assert!(
+        report.changed_symbols.iter().any(|symbol| {
+            symbol.change == ChangeKind::Modified
+                && symbol
+                    .after
+                    .as_ref()
+                    .and_then(|summary| summary.qualified_name.as_deref())
+                    == Some("lib.A.run")
+        }),
+        "expected lib.A.run to be marked modified: {:#?}",
+        report.changed_symbols
+    );
+    assert!(
+        !report.changed_symbols.iter().any(|symbol| {
+            symbol
+                .after
+                .as_ref()
+                .or(symbol.before.as_ref())
+                .and_then(|summary| summary.qualified_name.as_deref())
+                == Some("lib.B.run")
+        }),
+        "lib.B.run should not be marked modified: {:#?}",
+        report.changed_symbols
+    );
+}
+
 fn fixture_repo() -> tempfile::TempDir {
     let repo = tempfile::tempdir().expect("tempdir");
     fs::create_dir(repo.path().join("src")).expect("src dir");

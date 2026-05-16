@@ -1,6 +1,6 @@
 use aci_diff::{
     ChangeKind, ChangedSymbol, DependencyChange, DiffOptions, DiffReport, FileChange, ImpactedFile,
-    SymbolSummary, diff_refs,
+    SymbolSummary, diff_refs, edge_kind_label, ref_side_label, risk_label, symbol_kind_label,
 };
 use anyhow::Result;
 use std::io::Write;
@@ -93,9 +93,9 @@ fn print_plain(report: &DiffReport) {
         for diagnostic in &report.diagnostics {
             let file = diagnostic.file.as_deref().unwrap_or("<unknown>");
             println!(
-                "{}\t{:?}\t{}\t{}",
-                side_label(diagnostic.reference),
-                diagnostic.severity,
+                "{}\t{}\t{}\t{}",
+                ref_side_label(diagnostic.reference),
+                severity_label(diagnostic.severity),
                 file,
                 diagnostic.message
             );
@@ -128,7 +128,7 @@ fn print_pretty(report: &DiffReport, color: bool) {
                 change_label(dependency.change).to_string(),
                 dependency.file.clone(),
                 dependency.dependency.clone(),
-                format!("{:?}", dependency.edge_kind),
+                edge_kind_label(dependency.edge_kind).to_string(),
             ]
         }),
         style,
@@ -174,22 +174,22 @@ fn symbol_line(symbol: &ChangedSymbol) -> String {
         .unwrap_or_default();
     let name = display.map(symbol_name).unwrap_or_default();
     format!(
-        "{}\t{}\t{}\t{:?}\t{}",
+        "{}\t{}\t{}\t{}\t{}",
         change_label(symbol.change),
         name,
         location,
-        symbol.risk,
+        risk_label(symbol.risk),
         symbol.reason
     )
 }
 
 fn dependency_line(dependency: &DependencyChange) -> String {
     format!(
-        "{}\t{}\t{}\t{:?}",
+        "{}\t{}\t{}\t{}",
         change_label(dependency.change),
         dependency.file,
         dependency.dependency,
-        dependency.edge_kind
+        edge_kind_label(dependency.edge_kind)
     )
 }
 
@@ -207,10 +207,11 @@ fn symbol_row(symbol: &ChangedSymbol) -> Vec<String> {
         display.map(symbol_name).unwrap_or_default(),
         display
             .and_then(|summary| summary.kind)
-            .map(|kind| format!("{kind:?}"))
+            .map(symbol_kind_label)
+            .map(str::to_string)
             .unwrap_or_default(),
         location,
-        format!("{:?}", symbol.risk),
+        risk_label(symbol.risk).to_string(),
     ]
 }
 
@@ -232,10 +233,11 @@ fn change_label(change: ChangeKind) -> &'static str {
     }
 }
 
-fn side_label(side: aci_diff::RefSide) -> &'static str {
-    match side {
-        aci_diff::RefSide::Base => "base",
-        aci_diff::RefSide::Head => "head",
+fn severity_label(severity: aci_core::Severity) -> &'static str {
+    match severity {
+        aci_core::Severity::Info => "info",
+        aci_core::Severity::Warning => "warning",
+        aci_core::Severity::Error => "error",
     }
 }
 

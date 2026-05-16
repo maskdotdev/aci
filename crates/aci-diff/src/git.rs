@@ -23,11 +23,11 @@ impl GitRepository {
     }
 
     pub(crate) fn diff_name_status(&self, base: &str, head: &str) -> Result<Vec<FileChange>> {
-        let output = git_output(&self.root, ["diff", "--name-status", "-M", base, head])?;
-        let mut changes = Vec::new();
-        for line in output.lines().filter(|line| !line.trim().is_empty()) {
-            changes.push(parse_name_status_line(line)?);
-        }
+        let output = git_output_bytes(
+            &self.root,
+            ["diff", "--name-status", "-z", "-M", base, head],
+        )?;
+        let mut changes = parse_name_status_z(&output)?;
         changes.sort_by(|left, right| {
             left.path
                 .cmp(&right.path)
@@ -53,6 +53,7 @@ impl GitRepository {
                 base,
             ],
         )?;
+        let base_guard = WorktreeGuard::new(self.root.clone(), base_root.clone());
         git_status(
             &self.root,
             [
@@ -64,11 +65,12 @@ impl GitRepository {
                 head,
             ],
         )?;
+        let head_guard = WorktreeGuard::new(self.root.clone(), head_root.clone());
         Ok(CheckedOutRefs {
             base_root: base_root.clone(),
             head_root: head_root.clone(),
-            _base: WorktreeGuard::new(self.root.clone(), base_root),
-            _head: WorktreeGuard::new(self.root.clone(), head_root),
+            _base: base_guard,
+            _head: head_guard,
             _temp: temp,
         })
     }
@@ -108,42 +110,57 @@ impl Drop for WorktreeGuard {
     }
 }
 
-fn parse_name_status_line(line: &str) -> Result<FileChange> {
-    let parts = line.split('\t').collect::<Vec<_>>();
-    let status = parts
-        .first()
-        .ok_or_else(|| AciError::Message("empty git diff status line".to_string()))?;
-    let change = match status.chars().next() {
-        Some('A') => ChangeKind::Added,
-        Some('D') => ChangeKind::Removed,
-        Some('M') => ChangeKind::Modified,
-        Some('R') => ChangeKind::Renamed,
-        Some('C') => ChangeKind::Copied,
-        Some('T') => ChangeKind::TypeChanged,
+fn parse_name_status_z(output: &[u8]) -> Result<Vec<FileChange>> {
+    let mut fields = output
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty());
+    let mut changes = Vec::new();
+    while let Some(status) = fields.next() {
+        let change = change_from_status(status)?;
+        let (old_path, path) = if matches!(change, ChangeKind::Renamed | ChangeKind::Copied) {
+            let old_path = next_path(&mut fields, status, "old path")?;
+            let path = next_path(&mut fields, status, "new path")?;
+            (Some(old_path), path)
+        } else {
+            (None, next_path(&mut fields, status, "path")?)
+        };
+        changes.push(FileChange {
+            change,
+            path,
+            old_path,
+        });
+    }
+    Ok(changes)
+}
+
+fn change_from_status(status: &[u8]) -> Result<ChangeKind> {
+    let change = match status.first().copied() {
+        Some(b'A') => ChangeKind::Added,
+        Some(b'D') => ChangeKind::Removed,
+        Some(b'M') => ChangeKind::Modified,
+        Some(b'R') => ChangeKind::Renamed,
+        Some(b'C') => ChangeKind::Copied,
+        Some(b'T') => ChangeKind::TypeChanged,
         _ => {
             return Err(AciError::Message(format!(
-                "unsupported git diff status: {status}"
+                "unsupported git diff status: {}",
+                path_string(status)
             )));
         }
     };
-    let (old_path, path) = if matches!(change, ChangeKind::Renamed | ChangeKind::Copied) {
-        let old_path = parts.get(1).ok_or_else(|| {
-            AciError::Message(format!("missing old path in git diff status line: {line}"))
-        })?;
-        let path = parts.get(2).ok_or_else(|| {
-            AciError::Message(format!("missing new path in git diff status line: {line}"))
-        })?;
-        (Some((*old_path).to_string()), (*path).to_string())
-    } else {
-        let path = parts.get(1).ok_or_else(|| {
-            AciError::Message(format!("missing path in git diff status line: {line}"))
-        })?;
-        (None, (*path).to_string())
-    };
-    Ok(FileChange {
-        change,
-        path,
-        old_path,
+    Ok(change)
+}
+
+fn next_path<'a>(
+    fields: &mut impl Iterator<Item = &'a [u8]>,
+    status: &[u8],
+    label: &str,
+) -> Result<String> {
+    fields.next().map(path_string).ok_or_else(|| {
+        AciError::Message(format!(
+            "missing {label} after git diff status {}",
+            path_string(status)
+        ))
     })
 }
 
@@ -153,6 +170,14 @@ fn git_output<const N: usize>(cwd: &Path, args: [&str; N]) -> Result<String> {
         return Err(AciError::Message(git_error(&output)));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn git_output_bytes<const N: usize>(cwd: &Path, args: [&str; N]) -> Result<Vec<u8>> {
+    let output = Command::new("git").args(args).current_dir(cwd).output()?;
+    if !output.status.success() {
+        return Err(AciError::Message(git_error(&output)));
+    }
+    Ok(output.stdout)
 }
 
 fn git_status<const N: usize>(cwd: &Path, args: [&str; N]) -> Result<()> {
@@ -181,4 +206,42 @@ fn git_error(output: &std::process::Output) -> String {
 
 fn path_arg(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+fn path_string(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_nul_separated_name_status_with_special_paths() {
+        let input = b"M\0src/has space.ts\0A\0src/has\ttab.ts\0D\0src/has\nnewline.ts\0";
+        let changes = parse_name_status_z(input).expect("parse name-status");
+
+        assert_eq!(changes.len(), 3);
+        assert_eq!(changes[0].change, ChangeKind::Modified);
+        assert_eq!(changes[0].path, "src/has space.ts");
+        assert_eq!(changes[1].change, ChangeKind::Added);
+        assert_eq!(changes[1].path, "src/has\ttab.ts");
+        assert_eq!(changes[2].change, ChangeKind::Removed);
+        assert_eq!(changes[2].path, "src/has\nnewline.ts");
+    }
+
+    #[test]
+    fn parses_nul_separated_renames() {
+        let input = b"R100\0src/old name.ts\0src/new name.ts\0";
+        let changes = parse_name_status_z(input).expect("parse rename");
+
+        assert_eq!(
+            changes,
+            vec![FileChange {
+                change: ChangeKind::Renamed,
+                old_path: Some("src/old name.ts".to_string()),
+                path: "src/new name.ts".to_string(),
+            }]
+        );
+    }
 }
