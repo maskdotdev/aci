@@ -20,8 +20,19 @@ curl -fsSL https://aci.mask.dev/install.sh | sh
 ```
 
 The script downloads the latest GitHub Release asset for the current platform
-and installs `aci` into `$HOME/.local/bin` by default. Override the destination
-with:
+and installs `aci` into `$HOME/.local/bin` by default. If that directory is not
+already on `PATH`, the installer appends an export line to the current user's
+shell startup file (`.zshrc`, `.bashrc`, or `.profile`). The current shell cannot
+inherit that change from a piped `sh` process, so users should restart the shell
+or run the printed `export PATH=...` command.
+
+Disable shell profile edits with:
+
+```sh
+ACI_NO_PATH_UPDATE=1 curl -fsSL https://aci.mask.dev/install.sh | sh
+```
+
+Override the destination with:
 
 ```sh
 ACI_INSTALL_DIR=/usr/local/bin curl -fsSL https://aci.mask.dev/install.sh | sh

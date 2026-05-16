@@ -63,6 +63,32 @@ echo "installed aci to $install_dir/$bin_name"
 case ":$PATH:" in
   *":$install_dir:"*) ;;
   *)
-    echo "note: add $install_dir to PATH to run aci from any directory" >&2
+    if [ "${ACI_NO_PATH_UPDATE:-}" = "1" ]; then
+      echo "note: add $install_dir to PATH to run aci from any directory" >&2
+    else
+      shell_name="$(basename "${SHELL:-sh}")"
+      case "$shell_name" in
+        zsh)
+          shell_profile="$HOME/.zshrc"
+          ;;
+        bash)
+          shell_profile="$HOME/.bashrc"
+          ;;
+        *)
+          shell_profile="$HOME/.profile"
+          ;;
+      esac
+      path_line="export PATH=\"$install_dir:\$PATH\""
+      touch "$shell_profile"
+      if ! grep -F "$path_line" "$shell_profile" >/dev/null 2>&1; then
+        {
+          echo
+          echo "# Added by aci installer"
+          echo "$path_line"
+        } >>"$shell_profile"
+        echo "added $install_dir to PATH in $shell_profile"
+      fi
+      echo "restart your shell or run: export PATH=\"$install_dir:\$PATH\"" >&2
+    fi
     ;;
 esac
