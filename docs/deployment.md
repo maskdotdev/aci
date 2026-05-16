@@ -27,6 +27,12 @@ with:
 ACI_INSTALL_DIR=/usr/local/bin curl -fsSL https://aci.mask.dev/install.sh | sh
 ```
 
+Install a specific release by setting `ACI_VERSION`:
+
+```sh
+ACI_VERSION=v0.1.1 curl -fsSL https://aci.mask.dev/install.sh | sh
+```
+
 Supported release assets:
 
 - `aci-aarch64-apple-darwin.tar.gz`
