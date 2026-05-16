@@ -1,0 +1,21 @@
+[package]
+name = "aci-diff"
+version = "0.1.0"
+description = "Branch-to-branch semantic diffing over ACI code graphs."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+categories = ["development-tools"]
+keywords = ["code-index", "diff", "symbols"]
+
+[lints]
+workspace = true
+
+[dependencies]
+aci-core.workspace = true
+aci-indexer.workspace = true
+blake3.workspace = true
+serde.workspace = true
+tempfile.workspace = true

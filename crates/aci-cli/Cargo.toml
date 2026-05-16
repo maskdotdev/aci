@@ -20,6 +20,7 @@ path = "src/main.rs"
 [dependencies]
 aci-adapters.workspace = true
 aci-core.workspace = true
+aci-diff.workspace = true
 aci-export.workspace = true
 aci-indexer.workspace = true
 aci-query.workspace = true

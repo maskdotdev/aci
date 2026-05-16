@@ -15,6 +15,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub(crate) enum Command {
     Index(IndexArgs),
+    Diff(DiffArgs),
     Query(QueryArgs),
     Export(ExportArgs),
     Bench(BenchArgs),
@@ -32,6 +33,22 @@ pub struct IndexArgs {
     pub(crate) changed: Vec<PathBuf>,
     #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
     pub(crate) color: ColorChoice,
+}
+
+#[derive(Args)]
+pub struct DiffArgs {
+    pub(crate) base: String,
+    pub(crate) head: String,
+    #[arg(long, default_value = ".")]
+    pub(crate) repo: PathBuf,
+    #[arg(long)]
+    pub(crate) workers: Option<usize>,
+    #[arg(long, help = "Render diff results as aligned tables")]
+    pub(crate) pretty: bool,
+    #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
+    pub(crate) color: ColorChoice,
+    #[arg(long, value_enum, default_value_t = QueryFormat::Text)]
+    pub(crate) format: QueryFormat,
 }
 
 #[derive(Args)]

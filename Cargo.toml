@@ -3,6 +3,7 @@ members = [
   "crates/aci-adapters",
   "crates/aci-cli",
   "crates/aci-core",
+  "crates/aci-diff",
   "crates/aci-export",
   "crates/aci-indexer",
   "crates/aci-query",
@@ -30,6 +31,7 @@ undocumented_unsafe_blocks = "deny"
 [workspace.dependencies]
 aci-adapters = { version = "0.1.0", path = "crates/aci-adapters" }
 aci-core = { version = "0.1.0", path = "crates/aci-core" }
+aci-diff = { version = "0.1.0", path = "crates/aci-diff" }
 aci-export = { version = "0.1.0", path = "crates/aci-export" }
 aci-indexer = { version = "0.1.0", path = "crates/aci-indexer" }
 aci-query = { version = "0.1.0", path = "crates/aci-query" }

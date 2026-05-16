@@ -26,6 +26,7 @@ version = "0.1.0"
 dependencies = [
  "aci-adapters",
  "aci-core",
+ "aci-diff",
  "aci-export",
  "aci-indexer",
  "aci-query",
@@ -44,6 +45,17 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "aci-diff"
+version = "0.1.0"
+dependencies = [
+ "aci-core",
+ "aci-indexer",
+ "blake3",
+ "serde",
+ "tempfile",
 ]
 
 [[package]]

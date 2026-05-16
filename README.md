@@ -30,6 +30,7 @@ internal graph model.
 | `aci-core` | Graph model, IDs, spans, diagnostics, language types, fact quality. |
 | `aci-adapters` | Language detection, Tree-sitter extraction, scanner fallback, fixtures. |
 | `aci-indexer` | Discovery, filtering, fingerprinting, parallel indexing, incremental planning. |
+| `aci-diff` | Branch-to-branch semantic diffing over indexed graph snapshots. |
 | `aci-store` | Manifests, packed partitions, delta logs, snapshots, symbol/dependency indexes. |
 | `aci-query` | Symbol lookup, dependency traversal, callers, callees, references, impact. |
 | `aci-export` | JSONL, KiteDB, SCIP, and LSIF export shapes. |
@@ -99,6 +100,18 @@ cargo run -p aci-cli -- query impact src/lib.rs
 cargo run -p aci-cli -- query --pretty impact src/lib.rs
 ```
 
+Compare two Git refs semantically:
+
+```sh
+cargo run -p aci-cli -- diff main feature
+cargo run -p aci-cli -- diff main feature --pretty
+cargo run -p aci-cli -- diff main feature --format json --pretty
+```
+
+`aci diff` checks each ref out into an isolated detached worktree, indexes both
+trees, then reports file, symbol, public API, dependency, diagnostic, and impact
+changes without mutating the current working tree.
+
 Keep the store updated while editing:
 
 ```sh
@@ -161,6 +174,7 @@ Snapshots are optional compaction artifacts for faster query startup.
 - [Storage](docs/storage.md)
 - [Adapter authoring](docs/adapter-authoring.md)
 - [Exports](docs/exports.md)
+- [Branch diffs](docs/diff.md)
 - [Semantic enrichment](docs/semantic-enrichment.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Release checklist](docs/release-checklist.md)
