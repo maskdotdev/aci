@@ -45,6 +45,8 @@ pub struct DiffArgs {
     pub(crate) workers: Option<usize>,
     #[arg(long, help = "Render diff results as aligned tables")]
     pub(crate) pretty: bool,
+    #[arg(long, help = "Render a compact agent-oriented diff summary")]
+    pub(crate) agent: bool,
     #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
     pub(crate) color: ColorChoice,
     #[arg(long, value_enum, default_value_t = QueryFormat::Text)]

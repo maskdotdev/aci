@@ -6,8 +6,10 @@ review automation, release risk checks, and local branch review.
 
 ```sh
 aci diff main feature
+aci diff main feature --agent
 aci diff main feature --pretty
 aci diff main feature --format json --pretty
+aci diff main feature --agent --format json --pretty
 aci diff v0.1.1 v0.1.2 --repo /path/to/repo
 ```
 
@@ -24,6 +26,11 @@ aci diff v0.1.1 v0.1.2 --repo /path/to/repo
 
 Text output is optimized for humans. JSON output is stable and serializes the
 same report shape used by the `aci-diff` library crate.
+
+Use `--agent` when another tool or agent needs a compact review primitive. Agent
+mode ranks changed files, summarizes risk, highlights top changes, and keeps the
+raw symbol/dependency details out of the default response. Combine it with
+`--format json` for machine-readable review focus and top-change data.
 
 ## Worktree Safety
 

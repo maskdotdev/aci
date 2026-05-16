@@ -3,6 +3,7 @@
 //! This crate checks out two Git references into isolated worktrees, indexes
 //! both trees with `aci-indexer`, and compares the resulting graph snapshots.
 
+mod agent;
 mod compare;
 mod git;
 mod labels;
@@ -14,10 +15,12 @@ use aci_core::{GraphSnapshot, Result};
 use aci_indexer::{IndexOptions, IndexPipeline};
 use std::path::PathBuf;
 
+pub use agent::summarize_for_agent;
 pub use labels::{edge_kind_label, ref_side_label, risk_label, symbol_kind_label};
 pub use report::{
-    ChangeKind, ChangedSymbol, DependencyChange, DiffDiagnostic, DiffReport, DiffStats, FileChange,
-    ImpactedFile, RefSide, RefSummary, RiskLevel, SymbolSummary,
+    AgentDiffReport, AgentDiffStats, AgentReviewFocus, AgentTopChange, ChangeKind, ChangedSymbol,
+    DependencyChange, DiffDiagnostic, DiffReport, DiffStats, FileChange, ImpactedFile, RefSide,
+    RefSummary, RiskLevel, SymbolSummary,
 };
 
 /// Options for comparing two Git references.

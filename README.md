@@ -104,8 +104,10 @@ Compare two Git refs semantically:
 
 ```sh
 cargo run -p aci-cli -- diff main feature
+cargo run -p aci-cli -- diff main feature --agent
 cargo run -p aci-cli -- diff main feature --pretty
 cargo run -p aci-cli -- diff main feature --format json --pretty
+cargo run -p aci-cli -- diff main feature --agent --format json --pretty
 ```
 
 `aci diff` checks each ref out into an isolated detached worktree, indexes both

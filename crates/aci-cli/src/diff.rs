@@ -1,6 +1,7 @@
 use aci_diff::{
-    ChangeKind, ChangedSymbol, DependencyChange, DiffOptions, DiffReport, FileChange, ImpactedFile,
-    SymbolSummary, diff_refs, edge_kind_label, ref_side_label, risk_label, symbol_kind_label,
+    AgentDiffReport, ChangeKind, ChangedSymbol, DependencyChange, DiffOptions, DiffReport,
+    FileChange, ImpactedFile, SymbolSummary, diff_refs, edge_kind_label, ref_side_label,
+    risk_label, summarize_for_agent, symbol_kind_label,
 };
 use anyhow::Result;
 use std::io::Write;
@@ -22,17 +23,32 @@ pub fn run_diff(args: DiffArgs) -> Result<()> {
         .with_repo_root(args.repo)
         .with_workers(workers);
     let report = diff_refs(options)?;
+    let agent_report = args.agent.then(|| summarize_for_agent(&report));
     match args.format {
         QueryFormat::Json => {
             if args.pretty {
-                serde_json::to_writer_pretty(std::io::stdout(), &report)?;
+                if let Some(agent_report) = &agent_report {
+                    serde_json::to_writer_pretty(std::io::stdout(), agent_report)?;
+                } else {
+                    serde_json::to_writer_pretty(std::io::stdout(), &report)?;
+                }
                 println!();
             } else {
-                serde_json::to_writer(std::io::stdout(), &report)?;
+                if let Some(agent_report) = &agent_report {
+                    serde_json::to_writer(std::io::stdout(), agent_report)?;
+                } else {
+                    serde_json::to_writer(std::io::stdout(), &report)?;
+                }
                 println!();
             }
         }
-        QueryFormat::Text => print_text_report(&report, args.pretty, color),
+        QueryFormat::Text => {
+            if let Some(agent_report) = &agent_report {
+                print_agent_report(agent_report);
+            } else {
+                print_text_report(&report, args.pretty, color);
+            }
+        }
     }
     std::io::stdout().flush()?;
     let timing = format!("diff completed in {}", format_duration(started.elapsed()));
@@ -42,6 +58,59 @@ pub fn run_diff(args: DiffArgs) -> Result<()> {
         eprintln!("{timing}");
     }
     Ok(())
+}
+
+fn print_agent_report(report: &AgentDiffReport) {
+    println!(
+        "Risk: {} {}..{}",
+        risk_label(report.risk),
+        short_commit(&report.base.commit),
+        short_commit(&report.head.commit)
+    );
+    println!(
+        "Files: {} changed | Public API: {} | Important symbols: {} | Dependencies: {} | Diagnostics: {} | Tests changed: {}",
+        report.summary.files_changed,
+        report.summary.public_api_changes,
+        report.summary.important_symbol_changes,
+        report.summary.dependency_changes,
+        report.summary.diagnostics,
+        if report.summary.tests_changed {
+            "yes"
+        } else {
+            "no"
+        }
+    );
+    if !report.top_changes.is_empty() {
+        println!();
+        println!("Top changes:");
+        for change in &report.top_changes {
+            let subject = change
+                .symbol
+                .as_ref()
+                .map(|symbol| format!("{symbol} in {}", change.path))
+                .unwrap_or_else(|| change.path.clone());
+            println!(
+                "- [{}] {}: {}",
+                risk_label(change.risk),
+                subject,
+                change.why_it_matters
+            );
+        }
+    }
+    if !report.review_focus.is_empty() {
+        println!();
+        println!("Review focus:");
+        for focus in &report.review_focus {
+            println!("- {}: {}", focus.path, focus.reason);
+        }
+    }
+    if !report.notes.is_empty() {
+        println!();
+        println!("Notes:");
+        for note in &report.notes {
+            println!("- {note}");
+        }
+    }
 }
 
 fn print_text_report(report: &DiffReport, pretty: bool, color: bool) {

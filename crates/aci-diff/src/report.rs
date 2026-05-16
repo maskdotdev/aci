@@ -122,3 +122,40 @@ pub struct DiffReport {
     pub diagnostics: Vec<DiffDiagnostic>,
     pub stats: DiffStats,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AgentDiffStats {
+    pub files_changed: usize,
+    pub public_api_changes: usize,
+    pub important_symbol_changes: usize,
+    pub dependency_changes: usize,
+    pub diagnostics: usize,
+    pub tests_changed: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AgentTopChange {
+    pub kind: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    pub risk: RiskLevel,
+    pub why_it_matters: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AgentReviewFocus {
+    pub path: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AgentDiffReport {
+    pub base: RefSummary,
+    pub head: RefSummary,
+    pub risk: RiskLevel,
+    pub summary: AgentDiffStats,
+    pub top_changes: Vec<AgentTopChange>,
+    pub review_focus: Vec<AgentReviewFocus>,
+    pub notes: Vec<String>,
+}
