@@ -1,6 +1,6 @@
 use crate::discover::{discover_files, is_binary, is_vendor_or_generated};
 use crate::{IndexOptions, IndexReport, IndexSummary};
-use aci_adapters::{AdapterRegistry, default_registry};
+use aci_adapters::{AdapterRegistry, ExtractionOptions, default_registry};
 use aci_core::{Diagnostic, GraphPartition, Language, RepositoryId, Result, SourceFile};
 use rayon::prelude::*;
 use std::fs;
@@ -25,13 +25,15 @@ impl IndexPipeline {
 
     pub fn index_path(&self, options: IndexOptions) -> Result<IndexReport> {
         let root = options.root.canonicalize()?;
+        let extraction_options =
+            ExtractionOptions::default().with_max_parse_bytes(options.max_parse_bytes);
         let repo_id = RepositoryId::new("repo", &[root.to_string_lossy().as_ref()]);
         let candidates = discover_files(&root)?;
         let pool = thread_pool(options.workers)?;
         let indexed = pool.install(|| {
             candidates
                 .par_iter()
-                .map(|path| self.index_file(&repo_id, &root, path))
+                .map(|path| self.index_file(&repo_id, &root, path, extraction_options))
                 .collect::<Vec<_>>()
         });
 
@@ -59,24 +61,28 @@ impl IndexPipeline {
 
     pub fn summarize_path(&self, options: IndexOptions) -> Result<IndexSummary> {
         let root = options.root.canonicalize()?;
+        let extraction_options =
+            ExtractionOptions::default().with_max_parse_bytes(options.max_parse_bytes);
         let repo_id = RepositoryId::new("repo", &[root.to_string_lossy().as_ref()]);
         let candidates = discover_files(&root)?;
         let pool = thread_pool(options.workers)?;
         Ok(pool.install(|| {
             candidates
                 .par_iter()
-                .map(|path| match self.index_file(&repo_id, &root, path) {
-                    Ok(Some(partition)) => IndexSummary::from(partition),
-                    Ok(None) => IndexSummary::default(),
-                    Err(FileSkip::Skipped(_)) => IndexSummary {
-                        skipped_files: 1,
-                        ..IndexSummary::default()
+                .map(
+                    |path| match self.index_file(&repo_id, &root, path, extraction_options) {
+                        Ok(Some(partition)) => IndexSummary::from(partition),
+                        Ok(None) => IndexSummary::default(),
+                        Err(FileSkip::Skipped(_)) => IndexSummary {
+                            skipped_files: 1,
+                            ..IndexSummary::default()
+                        },
+                        Err(FileSkip::Diagnostic(_)) => IndexSummary {
+                            diagnostics: 1,
+                            ..IndexSummary::default()
+                        },
                     },
-                    Err(FileSkip::Diagnostic(_)) => IndexSummary {
-                        diagnostics: 1,
-                        ..IndexSummary::default()
-                    },
-                })
+                )
                 .reduce(IndexSummary::default, IndexSummary::merge)
         }))
     }
@@ -86,6 +92,8 @@ impl IndexPipeline {
         F: FnMut(&GraphPartition) -> Result<()>,
     {
         let root = options.root.canonicalize()?;
+        let extraction_options =
+            ExtractionOptions::default().with_max_parse_bytes(options.max_parse_bytes);
         let repo_id = RepositoryId::new("repo", &[root.to_string_lossy().as_ref()]);
         let candidates = discover_files(&root)?;
         let pool = thread_pool(options.workers)?;
@@ -97,7 +105,7 @@ impl IndexPipeline {
             let producer = scope.spawn(|| {
                 pool.install(|| {
                     candidates.par_iter().try_for_each_with(tx, |tx, path| {
-                        tx.send(self.index_file(&repo_id, &root, path))
+                        tx.send(self.index_file(&repo_id, &root, path, extraction_options))
                             .map_err(|_| {
                                 aci_core::AciError::Message(
                                     "index stream receiver closed".to_string(),
@@ -139,15 +147,17 @@ impl IndexPipeline {
         root: &Path,
         changed_paths: &[PathBuf],
         workers: usize,
+        max_parse_bytes: Option<usize>,
     ) -> Result<Vec<GraphPartition>> {
         let root = root.canonicalize()?;
+        let extraction_options = ExtractionOptions::default().with_max_parse_bytes(max_parse_bytes);
         let repo_id = RepositoryId::new("repo", &[root.to_string_lossy().as_ref()]);
         let pool = thread_pool(workers)?;
         let indexed = pool.install(|| {
             changed_paths
                 .par_iter()
                 .filter(|path| path.exists())
-                .map(|path| self.index_file(&repo_id, &root, path))
+                .map(|path| self.index_file(&repo_id, &root, path, extraction_options))
                 .collect::<Vec<_>>()
         });
 
@@ -168,6 +178,7 @@ impl IndexPipeline {
         repo_id: &RepositoryId,
         root: &Path,
         path: &Path,
+        extraction_options: ExtractionOptions,
     ) -> std::result::Result<Option<GraphPartition>, FileSkip> {
         if is_vendor_or_generated(path) {
             return Err(FileSkip::Skipped(path.to_path_buf()));
@@ -190,7 +201,9 @@ impl IndexPipeline {
         })?;
         let source = SourceFile::new(repo_id.clone(), root, path.to_path_buf(), language, text);
         let started = Instant::now();
-        let mut partition = self.registry.extract(&source);
+        let mut partition = self
+            .registry
+            .extract_with_options(&source, extraction_options);
         partition.metrics.extraction_time_micros = started.elapsed().as_micros() as u64;
         Ok(Some(partition))
     }

@@ -1,6 +1,6 @@
 use crate::args::ColorChoice;
 use crate::output::Output;
-use crate::{normalize_changed_paths, reindex_changed, run_index_command};
+use crate::{ReindexOptions, normalize_changed_paths, reindex_changed, run_index_command};
 use aci_indexer::{IndexOptions, IndexPipeline};
 use aci_store::GraphStore;
 use aci_watch::{WatchOptions, watch_until_quiet};
@@ -17,6 +17,8 @@ pub struct WatchArgs {
     pub(crate) store: PathBuf,
     #[arg(long)]
     pub(crate) workers: Option<usize>,
+    #[arg(long)]
+    pub(crate) max_parse_bytes: Option<usize>,
     #[arg(long, default_value_t = 150)]
     pub(crate) debounce_ms: u64,
     #[arg(long, default_value_t = 86_400_000)]
@@ -39,6 +41,7 @@ pub fn run_watch(args: WatchArgs) -> Result<()> {
             path.clone(),
             args.store.clone(),
             args.workers,
+            args.max_parse_bytes,
             Vec::new(),
             color,
         )?;
@@ -47,6 +50,7 @@ pub fn run_watch(args: WatchArgs) -> Result<()> {
     if let Some(workers) = args.workers {
         index_options.workers = workers;
     }
+    index_options.max_parse_bytes = args.max_parse_bytes;
     let store_path = absolute_store_path(&args.store)?;
     let pipeline = IndexPipeline::default();
     if color {
@@ -83,10 +87,13 @@ pub fn run_watch(args: WatchArgs) -> Result<()> {
             &store,
             &pipeline,
             &path,
-            index_options.workers,
             &changed_paths,
-            None,
-            color,
+            ReindexOptions {
+                workers: index_options.workers,
+                max_parse_bytes: index_options.max_parse_bytes,
+                ignored_root: None,
+                color,
+            },
         )?;
         for problem in integrity {
             eprintln!("integrity: {problem}");

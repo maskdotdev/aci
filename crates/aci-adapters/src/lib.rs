@@ -11,6 +11,21 @@ pub mod helpers;
 pub mod languages;
 pub mod tree_sitter;
 
+/// Options that tune extraction behavior across language adapters.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ExtractionOptions {
+    pub parse_limits: tree_sitter::ParseLimits,
+}
+
+impl ExtractionOptions {
+    pub fn with_max_parse_bytes(mut self, max_parse_bytes: Option<usize>) -> Self {
+        if let Some(max_parse_bytes) = max_parse_bytes {
+            self.parse_limits.max_file_bytes = max_parse_bytes;
+        }
+        self
+    }
+}
+
 /// A language-specific detector and extractor.
 pub trait LanguageAdapter: Send + Sync {
     /// The language emitted by this adapter.
@@ -23,6 +38,15 @@ pub trait LanguageAdapter: Send + Sync {
     fn detect(&self, path: &Path, bytes: &[u8]) -> bool;
     /// Extracts a per-file graph partition from `file`.
     fn extract(&self, file: &SourceFile) -> GraphPartition;
+    /// Extracts with caller-provided limits and adapter options.
+    fn extract_with_options(
+        &self,
+        file: &SourceFile,
+        options: ExtractionOptions,
+    ) -> GraphPartition {
+        let _ = options;
+        self.extract(file)
+    }
 }
 
 /// Ordered collection of language adapters used by the indexer.
@@ -76,10 +100,19 @@ impl AdapterRegistry {
 
     /// Extracts a graph partition for `file` using its detected language.
     pub fn extract(&self, file: &SourceFile) -> GraphPartition {
+        self.extract_with_options(file, ExtractionOptions::default())
+    }
+
+    /// Extracts a graph partition for `file` using its detected language and caller options.
+    pub fn extract_with_options(
+        &self,
+        file: &SourceFile,
+        options: ExtractionOptions,
+    ) -> GraphPartition {
         self.adapters
             .iter()
             .find(|adapter| adapter.language() == file.language)
-            .map(|adapter| adapter.extract(file))
+            .map(|adapter| adapter.extract_with_options(file, options))
             .unwrap_or_else(|| GraphPartition::empty(file))
     }
 }

@@ -69,6 +69,7 @@ Index the current repository into `.aci`:
 
 ```sh
 cargo run -p aci-cli -- index .
+cargo run -p aci-cli -- index . --max-parse-bytes 10485760
 ```
 
 Query symbols:
@@ -108,11 +109,18 @@ cargo run -p aci-cli -- diff main feature --agent
 cargo run -p aci-cli -- diff main feature --pretty
 cargo run -p aci-cli -- diff main feature --format json --pretty
 cargo run -p aci-cli -- diff main feature --agent --format json --pretty
+cargo run -p aci-cli -- diff main feature --agent --max-parse-bytes 10485760
 ```
 
 `aci diff` checks each ref out into an isolated detached worktree, indexes both
 trees, then reports file, symbol, public API, dependency, diagnostic, and impact
 changes without mutating the current working tree.
+
+Tree-sitter adapters skip files above the parse byte cap and fall back to
+structural scanners when fallback mode is enabled. Use `--max-parse-bytes` on
+`index`, `watch`, `diff`, `bench cold`, and `bench query-path` when a repository
+has large generated-by-hand source files that should still get parser-backed
+facts. The default protects indexing latency and memory on mixed repositories.
 
 Keep the store updated while editing:
 
@@ -120,6 +128,7 @@ Keep the store updated while editing:
 cargo run -p aci-cli -- watch .
 cargo run -p aci-cli -- watch . --debounce-ms 250
 cargo run -p aci-cli -- watch . --once --max-wait-ms 5000
+cargo run -p aci-cli -- watch . --max-parse-bytes 10485760
 ```
 
 Export the graph:

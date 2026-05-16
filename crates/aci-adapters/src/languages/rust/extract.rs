@@ -1,3 +1,4 @@
+use crate::ExtractionOptions;
 use crate::helpers::PartitionBuilder;
 use crate::tree_sitter::{
     ExtractionMode, ParseLimits, ParseSkip, ParserPool, child_by_field_name, node_span, node_text,
@@ -11,17 +12,26 @@ use std::sync::OnceLock;
 static RUST_POOL: OnceLock<ParserPool> = OnceLock::new();
 
 pub fn extract_rust(file: &SourceFile) -> GraphPartition {
+    extract_rust_with_options(file, ExtractionOptions::default())
+}
+
+pub fn extract_rust_with_options(file: &SourceFile, options: ExtractionOptions) -> GraphPartition {
     match ExtractionMode::current() {
         ExtractionMode::ScannerOnly => scanner_extract_rust(file),
-        ExtractionMode::TreeSitterOnly => tree_sitter_extract_rust(file, false),
+        ExtractionMode::TreeSitterOnly => {
+            tree_sitter_extract_rust(file, options.parse_limits, false)
+        }
         ExtractionMode::TreeSitterWithFallback | ExtractionMode::TreeSitterWithEnrichment => {
-            tree_sitter_extract_rust(file, true)
+            tree_sitter_extract_rust(file, options.parse_limits, true)
         }
     }
 }
 
-fn tree_sitter_extract_rust(file: &SourceFile, fallback: bool) -> GraphPartition {
-    let limits = ParseLimits::default();
+fn tree_sitter_extract_rust(
+    file: &SourceFile,
+    limits: ParseLimits,
+    fallback: bool,
+) -> GraphPartition {
     let pool = RUST_POOL.get_or_init(|| ParserPool::new(rust_language()));
     let report = match pool.parse(&file.text, &file.file_id, limits) {
         Ok(report) => report,

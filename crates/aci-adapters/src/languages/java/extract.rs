@@ -1,3 +1,4 @@
+use crate::ExtractionOptions;
 use crate::languages::brace::{self, BraceLanguage};
 use crate::tree_sitter::{ParserPool, java_language};
 use aci_core::{GraphPartition, SourceFile};
@@ -22,6 +23,10 @@ const JAVA_CONFIG: BraceLanguage = BraceLanguage {
 };
 
 pub fn extract_java(file: &SourceFile) -> GraphPartition {
+    extract_java_with_options(file, ExtractionOptions::default())
+}
+
+pub fn extract_java_with_options(file: &SourceFile, options: ExtractionOptions) -> GraphPartition {
     let pool = JAVA_POOL.get_or_init(|| ParserPool::new(java_language()));
-    brace::extract(file, pool, &JAVA_CONFIG)
+    brace::extract_with_options(file, pool, &JAVA_CONFIG, options)
 }

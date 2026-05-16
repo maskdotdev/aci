@@ -16,8 +16,9 @@ pub fn run_bench(args: BenchArgs) -> Result<()> {
         BenchCommand::Cold {
             path,
             workers,
+            max_parse_bytes,
             variant,
-        } => bench_cold(path, workers, variant),
+        } => bench_cold(path, workers, max_parse_bytes, variant),
         BenchCommand::Query {
             store,
             name,
@@ -28,7 +29,8 @@ pub fn run_bench(args: BenchArgs) -> Result<()> {
             name,
             iterations,
             workers,
-        } => bench_query_path(path, name, iterations, workers),
+            max_parse_bytes,
+        } => bench_query_path(path, name, iterations, workers, max_parse_bytes),
         BenchCommand::Semantic { iterations } => bench_semantic(iterations),
     }
 }
@@ -36,6 +38,7 @@ pub fn run_bench(args: BenchArgs) -> Result<()> {
 fn bench_cold(
     path: PathBuf,
     workers: Option<usize>,
+    max_parse_bytes: Option<usize>,
     variant: BenchExtractionVariant,
 ) -> Result<()> {
     let mode = variant.mode();
@@ -44,6 +47,7 @@ fn bench_cold(
     if let Some(workers) = workers {
         options.workers = workers;
     }
+    options.max_parse_bytes = max_parse_bytes;
     let start = Instant::now();
     let summary = IndexPipeline::default().summarize_path(options)?;
     let elapsed = start.elapsed().as_secs_f64();
@@ -92,11 +96,13 @@ fn bench_query_path(
     name: String,
     iterations: usize,
     workers: Option<usize>,
+    max_parse_bytes: Option<usize>,
 ) -> Result<()> {
     let mut options = IndexOptions::new(&path);
     if let Some(workers) = workers {
         options.workers = workers;
     }
+    options.max_parse_bytes = max_parse_bytes;
     let report = IndexPipeline::default().index_path(options)?;
     let engine = QueryEngine::new(aci_core::GraphSnapshot {
         partitions: report.partitions,

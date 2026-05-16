@@ -1,3 +1,4 @@
+use crate::ExtractionOptions;
 use crate::languages::brace::{self, BraceLanguage};
 use crate::tree_sitter::{ParserPool, objective_c_language};
 use aci_core::{GraphPartition, SourceFile};
@@ -26,6 +27,13 @@ const OBJECTIVE_C_CONFIG: BraceLanguage = BraceLanguage {
 };
 
 pub fn extract_objective_c(file: &SourceFile) -> GraphPartition {
+    extract_objective_c_with_options(file, ExtractionOptions::default())
+}
+
+pub fn extract_objective_c_with_options(
+    file: &SourceFile,
+    options: ExtractionOptions,
+) -> GraphPartition {
     let pool = OBJECTIVE_C_POOL.get_or_init(|| ParserPool::new(objective_c_language()));
-    brace::extract(file, pool, &OBJECTIVE_C_CONFIG)
+    brace::extract_with_options(file, pool, &OBJECTIVE_C_CONFIG, options)
 }

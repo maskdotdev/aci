@@ -22,7 +22,9 @@ pub use bench::run_bench;
 pub use diff::run_diff;
 pub use export::run_export;
 pub use index::run_index;
-pub(crate) use index::{normalize_changed_paths, reindex_changed, run_index_command};
+pub(crate) use index::{
+    ReindexOptions, normalize_changed_paths, reindex_changed, run_index_command,
+};
 pub use query::run_query;
 
 impl Cli {

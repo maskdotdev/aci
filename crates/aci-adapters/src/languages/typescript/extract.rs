@@ -1,3 +1,4 @@
+use crate::ExtractionOptions;
 use crate::helpers::{PartitionBuilder, first_identifier_after, quoted_module, read_identifier};
 use crate::languages::typescript::scanner::scanner_extract_typescript;
 use crate::tree_sitter::{
@@ -16,17 +17,29 @@ static TYPESCRIPT_POOL: OnceLock<ParserPool> = OnceLock::new();
 static TSX_POOL: OnceLock<ParserPool> = OnceLock::new();
 
 pub fn extract_typescript(file: &SourceFile) -> GraphPartition {
+    extract_typescript_with_options(file, ExtractionOptions::default())
+}
+
+pub fn extract_typescript_with_options(
+    file: &SourceFile,
+    options: ExtractionOptions,
+) -> GraphPartition {
     match ExtractionMode::current() {
         ExtractionMode::ScannerOnly => scanner_extract_typescript(file),
-        ExtractionMode::TreeSitterOnly => tree_sitter_extract_typescript(file, false),
+        ExtractionMode::TreeSitterOnly => {
+            tree_sitter_extract_typescript(file, options.parse_limits, false)
+        }
         ExtractionMode::TreeSitterWithFallback | ExtractionMode::TreeSitterWithEnrichment => {
-            tree_sitter_extract_typescript(file, true)
+            tree_sitter_extract_typescript(file, options.parse_limits, true)
         }
     }
 }
 
-fn tree_sitter_extract_typescript(file: &SourceFile, fallback: bool) -> GraphPartition {
-    let limits = ParseLimits::default();
+fn tree_sitter_extract_typescript(
+    file: &SourceFile,
+    limits: ParseLimits,
+    fallback: bool,
+) -> GraphPartition {
     let grammar = grammar_for_path(&file.path, file.language);
     let pool = match grammar {
         Grammar::JavaScript => {

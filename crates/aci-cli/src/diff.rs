@@ -21,7 +21,8 @@ pub fn run_diff(args: DiffArgs) -> Result<()> {
     });
     let options = DiffOptions::new(args.base, args.head)
         .with_repo_root(args.repo)
-        .with_workers(workers);
+        .with_workers(workers)
+        .with_max_parse_bytes(args.max_parse_bytes);
     let report = diff_refs(options)?;
     let agent_report = args.agent.then(|| summarize_for_agent(&report));
     match args.format {

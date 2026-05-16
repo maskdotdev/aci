@@ -30,6 +30,7 @@ pub struct DiffOptions {
     pub base_ref: String,
     pub head_ref: String,
     pub workers: usize,
+    pub max_parse_bytes: Option<usize>,
 }
 
 impl DiffOptions {
@@ -42,6 +43,7 @@ impl DiffOptions {
             workers: std::thread::available_parallelism()
                 .map(usize::from)
                 .unwrap_or(1),
+            max_parse_bytes: None,
         }
     }
 
@@ -54,6 +56,12 @@ impl DiffOptions {
     /// Sets the maximum indexing worker count.
     pub fn with_workers(mut self, workers: usize) -> Self {
         self.workers = workers.max(1);
+        self
+    }
+
+    /// Sets the maximum source bytes a Tree-sitter adapter may parse per file.
+    pub fn with_max_parse_bytes(mut self, max_parse_bytes: Option<usize>) -> Self {
+        self.max_parse_bytes = max_parse_bytes;
         self
     }
 }
@@ -70,12 +78,14 @@ pub fn diff_refs(options: DiffOptions) -> Result<DiffReport> {
         &base_commit,
         worktrees.base_root.clone(),
         options.workers,
+        options.max_parse_bytes,
     )?;
     let head = index_ref(
         &options.head_ref,
         &head_commit,
         worktrees.head_root.clone(),
         options.workers,
+        options.max_parse_bytes,
     )?;
     compare::compare_refs(base, head, changed_files)
 }
@@ -89,9 +99,16 @@ pub(crate) struct IndexedRef {
     skipped: Vec<PathBuf>,
 }
 
-fn index_ref(label: &str, commit: &str, root: PathBuf, workers: usize) -> Result<IndexedRef> {
+fn index_ref(
+    label: &str,
+    commit: &str,
+    root: PathBuf,
+    workers: usize,
+    max_parse_bytes: Option<usize>,
+) -> Result<IndexedRef> {
     let mut options = IndexOptions::new(&root);
     options.workers = workers;
+    options.max_parse_bytes = max_parse_bytes;
     let report = IndexPipeline::default().index_path(options)?;
     Ok(IndexedRef {
         label: label.to_string(),

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 pub struct IndexOptions {
     pub root: PathBuf,
     pub workers: usize,
+    pub max_parse_bytes: Option<usize>,
 }
 
 impl IndexOptions {
@@ -16,6 +17,7 @@ impl IndexOptions {
             workers: std::thread::available_parallelism()
                 .map(usize::from)
                 .unwrap_or(1),
+            max_parse_bytes: None,
         }
     }
 }

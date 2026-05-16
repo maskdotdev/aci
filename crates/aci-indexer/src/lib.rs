@@ -106,6 +106,37 @@ mod tests {
     }
 
     #[test]
+    fn max_parse_bytes_skips_tree_sitter_and_keeps_fallback_facts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("app.ts"),
+            "export function main() {\n  helper();\n}\nfunction helper() {}\n",
+        )
+        .expect("write ts");
+        let mut options = IndexOptions::new(dir.path());
+        options.max_parse_bytes = Some(8);
+
+        let report = IndexPipeline::default()
+            .index_path(options)
+            .expect("index oversized fixture");
+
+        let partition = report
+            .partitions
+            .iter()
+            .find(|partition| partition.path.ends_with("app.ts"))
+            .expect("typescript partition");
+        assert!(
+            partition
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("skipped large JS/TS file"))
+        );
+        assert!(partition.nodes.iter().any(|node| {
+            node.name.as_deref() == Some("main") || node.name.as_deref() == Some("helper")
+        }));
+    }
+
+    #[test]
     fn skips_binary_and_vendor_files() {
         assert!(is_binary(b"a\0b"));
         assert!(is_vendor_or_generated(Path::new(

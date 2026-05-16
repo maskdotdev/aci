@@ -10,13 +10,21 @@ use crate::output::{Output, format_duration};
 
 pub fn run_index(args: IndexArgs) -> Result<()> {
     let color = args.color.enabled();
-    run_index_command(args.path, args.store, args.workers, args.changed, color)
+    run_index_command(
+        args.path,
+        args.store,
+        args.workers,
+        args.max_parse_bytes,
+        args.changed,
+        color,
+    )
 }
 
 pub(crate) fn run_index_command(
     path: PathBuf,
     store: PathBuf,
     workers: Option<usize>,
+    max_parse_bytes: Option<usize>,
     changed: Vec<PathBuf>,
     color: bool,
 ) -> Result<()> {
@@ -25,6 +33,7 @@ pub(crate) fn run_index_command(
     if let Some(workers) = workers {
         options.workers = workers;
     }
+    options.max_parse_bytes = max_parse_bytes;
     let pipeline = IndexPipeline::default();
     let store = GraphStore::open(store)?;
     let out = Output::new(color);
@@ -62,10 +71,13 @@ pub(crate) fn run_index_command(
             &store,
             &pipeline,
             &root,
-            options.workers,
             &changed,
-            None,
-            color,
+            ReindexOptions {
+                workers: options.workers,
+                max_parse_bytes: options.max_parse_bytes,
+                ignored_root: None,
+                color,
+            },
         )?
     };
     for problem in integrity {
@@ -86,23 +98,28 @@ pub(crate) fn normalize_changed_paths(
         .collect()
 }
 
+pub(crate) struct ReindexOptions<'a> {
+    pub(crate) workers: usize,
+    pub(crate) max_parse_bytes: Option<usize>,
+    pub(crate) ignored_root: Option<&'a Path>,
+    pub(crate) color: bool,
+}
+
 pub(crate) fn reindex_changed(
     store: &GraphStore,
     pipeline: &IndexPipeline,
     root: &Path,
-    workers: usize,
     changed: &[PathBuf],
-    ignored_root: Option<&Path>,
-    color: bool,
+    options: ReindexOptions<'_>,
 ) -> Result<Vec<String>> {
     let started = Instant::now();
-    let out = Output::new(color);
+    let out = Output::new(options.color);
     let mut changed = normalize_changed_paths(root, changed, pipeline);
-    if let Some(ignored_root) = ignored_root {
+    if let Some(ignored_root) = options.ignored_root {
         changed.retain(|path| !path.starts_with(ignored_root));
     }
     if changed.is_empty() {
-        if color {
+        if options.color {
             println!(
                 "{} {} files  {}",
                 out.label("re-indexed"),
@@ -131,7 +148,12 @@ pub(crate) fn reindex_changed(
             }
         }
     };
-    let partitions = pipeline.index_changed_paths(root, &plan.files_to_reindex, workers)?;
+    let partitions = pipeline.index_changed_paths(
+        root,
+        &plan.files_to_reindex,
+        options.workers,
+        options.max_parse_bytes,
+    )?;
     let mut integrity = Vec::new();
     for partition in &partitions {
         integrity.extend(check_partition_integrity(partition));
@@ -139,7 +161,7 @@ pub(crate) fn reindex_changed(
     if !partitions.is_empty() {
         store.replace_partitions(&partitions)?;
     }
-    if color {
+    if options.color {
         println!(
             "{} {} files  {} {} direct  {} {} deps  {}",
             out.label("re-indexed"),

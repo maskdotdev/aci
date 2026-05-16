@@ -1,3 +1,4 @@
+use crate::ExtractionOptions;
 use crate::helpers::{
     PartitionBuilder, call_identifiers, first_identifier_after, line_span, read_identifier,
 };
@@ -13,17 +14,29 @@ use std::sync::OnceLock;
 static PYTHON_POOL: OnceLock<ParserPool> = OnceLock::new();
 
 pub fn extract_python(file: &SourceFile) -> GraphPartition {
+    extract_python_with_options(file, ExtractionOptions::default())
+}
+
+pub fn extract_python_with_options(
+    file: &SourceFile,
+    options: ExtractionOptions,
+) -> GraphPartition {
     match ExtractionMode::current() {
         ExtractionMode::ScannerOnly => scanner_extract_python(file),
-        ExtractionMode::TreeSitterOnly => tree_sitter_extract_python(file, false),
+        ExtractionMode::TreeSitterOnly => {
+            tree_sitter_extract_python(file, options.parse_limits, false)
+        }
         ExtractionMode::TreeSitterWithFallback | ExtractionMode::TreeSitterWithEnrichment => {
-            tree_sitter_extract_python(file, true)
+            tree_sitter_extract_python(file, options.parse_limits, true)
         }
     }
 }
 
-fn tree_sitter_extract_python(file: &SourceFile, fallback: bool) -> GraphPartition {
-    let limits = ParseLimits::default();
+fn tree_sitter_extract_python(
+    file: &SourceFile,
+    limits: ParseLimits,
+    fallback: bool,
+) -> GraphPartition {
     let pool = PYTHON_POOL.get_or_init(|| ParserPool::new(python_language()));
     let report = match pool.parse(&file.text, &file.file_id, limits) {
         Ok(report) => report,

@@ -4,10 +4,10 @@ mod resolve;
 mod scanner;
 
 pub use detect::{detect_javascript, detect_typescript};
-pub use extract::extract_typescript;
+pub use extract::{extract_typescript, extract_typescript_with_options};
 pub use resolve::resolve_partition;
 
-use crate::LanguageAdapter;
+use crate::{ExtractionOptions, LanguageAdapter};
 use aci_core::{GraphPartition, Language, SourceFile};
 use std::path::Path;
 
@@ -30,6 +30,14 @@ impl LanguageAdapter for TypeScriptAdapter {
     fn extract(&self, file: &SourceFile) -> GraphPartition {
         extract::extract_typescript(file)
     }
+
+    fn extract_with_options(
+        &self,
+        file: &SourceFile,
+        options: ExtractionOptions,
+    ) -> GraphPartition {
+        extract::extract_typescript_with_options(file, options)
+    }
 }
 
 impl LanguageAdapter for JavaScriptAdapter {
@@ -47,5 +55,13 @@ impl LanguageAdapter for JavaScriptAdapter {
 
     fn extract(&self, file: &SourceFile) -> GraphPartition {
         extract::extract_typescript(file)
+    }
+
+    fn extract_with_options(
+        &self,
+        file: &SourceFile,
+        options: ExtractionOptions,
+    ) -> GraphPartition {
+        extract::extract_typescript_with_options(file, options)
     }
 }

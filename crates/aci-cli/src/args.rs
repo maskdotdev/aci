@@ -29,6 +29,8 @@ pub struct IndexArgs {
     pub(crate) store: PathBuf,
     #[arg(long)]
     pub(crate) workers: Option<usize>,
+    #[arg(long)]
+    pub(crate) max_parse_bytes: Option<usize>,
     #[arg(long = "changed")]
     pub(crate) changed: Vec<PathBuf>,
     #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
@@ -43,6 +45,8 @@ pub struct DiffArgs {
     pub(crate) repo: PathBuf,
     #[arg(long)]
     pub(crate) workers: Option<usize>,
+    #[arg(long)]
+    pub(crate) max_parse_bytes: Option<usize>,
     #[arg(long, help = "Render diff results as aligned tables")]
     pub(crate) pretty: bool,
     #[arg(long, help = "Render a compact agent-oriented diff summary")]
@@ -119,6 +123,8 @@ pub enum BenchCommand {
         path: PathBuf,
         #[arg(long)]
         workers: Option<usize>,
+        #[arg(long)]
+        max_parse_bytes: Option<usize>,
         #[arg(long, value_enum, default_value_t = BenchExtractionVariant::TreeSitterFallback)]
         variant: BenchExtractionVariant,
     },
@@ -138,6 +144,8 @@ pub enum BenchCommand {
         iterations: usize,
         #[arg(long)]
         workers: Option<usize>,
+        #[arg(long)]
+        max_parse_bytes: Option<usize>,
     },
     Semantic {
         #[arg(long, default_value_t = 1000)]

@@ -1,3 +1,4 @@
+use crate::ExtractionOptions;
 use crate::languages::brace::{self, BraceLanguage};
 use crate::tree_sitter::{ParserPool, go_language};
 use aci_core::{GraphPartition, SourceFile};
@@ -22,6 +23,10 @@ const GO_CONFIG: BraceLanguage = BraceLanguage {
 };
 
 pub fn extract_go(file: &SourceFile) -> GraphPartition {
+    extract_go_with_options(file, ExtractionOptions::default())
+}
+
+pub fn extract_go_with_options(file: &SourceFile, options: ExtractionOptions) -> GraphPartition {
     let pool = GO_POOL.get_or_init(|| ParserPool::new(go_language()));
-    brace::extract(file, pool, &GO_CONFIG)
+    brace::extract_with_options(file, pool, &GO_CONFIG, options)
 }

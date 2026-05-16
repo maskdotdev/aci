@@ -1,3 +1,4 @@
+use crate::ExtractionOptions;
 use crate::languages::brace::{self, BraceLanguage};
 use crate::tree_sitter::{ParserPool, cpp_language};
 use aci_core::{GraphPartition, SourceFile};
@@ -22,6 +23,10 @@ const CPP_CONFIG: BraceLanguage = BraceLanguage {
 };
 
 pub fn extract_cpp(file: &SourceFile) -> GraphPartition {
+    extract_cpp_with_options(file, ExtractionOptions::default())
+}
+
+pub fn extract_cpp_with_options(file: &SourceFile, options: ExtractionOptions) -> GraphPartition {
     let pool = CPP_POOL.get_or_init(|| ParserPool::new(cpp_language()));
-    brace::extract(file, pool, &CPP_CONFIG)
+    brace::extract_with_options(file, pool, &CPP_CONFIG, options)
 }

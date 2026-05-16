@@ -1,3 +1,4 @@
+use crate::ExtractionOptions;
 use crate::helpers::PartitionBuilder;
 use crate::tree_sitter::{
     ExtractionMode, ParseLimits, ParseSkip, ParserPool, child_by_field_name, node_span, node_text,
@@ -26,11 +27,22 @@ pub struct BraceLanguage {
 }
 
 pub fn extract(file: &SourceFile, pool: &ParserPool, config: &BraceLanguage) -> GraphPartition {
+    extract_with_options(file, pool, config, ExtractionOptions::default())
+}
+
+pub fn extract_with_options(
+    file: &SourceFile,
+    pool: &ParserPool,
+    config: &BraceLanguage,
+    options: ExtractionOptions,
+) -> GraphPartition {
     match ExtractionMode::current() {
         ExtractionMode::ScannerOnly => scanner::extract(file, config),
-        ExtractionMode::TreeSitterOnly => tree_sitter_extract(file, pool, config, false),
+        ExtractionMode::TreeSitterOnly => {
+            tree_sitter_extract(file, pool, config, options.parse_limits, false)
+        }
         ExtractionMode::TreeSitterWithFallback | ExtractionMode::TreeSitterWithEnrichment => {
-            tree_sitter_extract(file, pool, config, true)
+            tree_sitter_extract(file, pool, config, options.parse_limits, true)
         }
     }
 }
@@ -43,9 +55,9 @@ fn tree_sitter_extract(
     file: &SourceFile,
     pool: &ParserPool,
     config: &BraceLanguage,
+    limits: ParseLimits,
     fallback: bool,
 ) -> GraphPartition {
-    let limits = ParseLimits::default();
     let report = match pool.parse(&file.text, &file.file_id, limits) {
         Ok(report) => report,
         Err(skip) if fallback => {
