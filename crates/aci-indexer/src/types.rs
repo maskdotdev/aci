@@ -1,6 +1,7 @@
 use aci_core::{Diagnostic, GraphPartition, RepositoryId};
 use std::path::PathBuf;
 
+/// Options for indexing a repository root.
 #[derive(Clone, Debug)]
 pub struct IndexOptions {
     pub root: PathBuf,
@@ -8,6 +9,7 @@ pub struct IndexOptions {
 }
 
 impl IndexOptions {
+    /// Creates options using all available parallel workers.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
@@ -18,6 +20,7 @@ impl IndexOptions {
     }
 }
 
+/// Full indexing output retained in memory.
 #[derive(Clone, Debug)]
 pub struct IndexReport {
     pub repo_id: RepositoryId,
@@ -27,6 +30,7 @@ pub struct IndexReport {
     pub skipped: Vec<PathBuf>,
 }
 
+/// Files that should be refreshed after a set of direct changes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IncrementalPlan {
     pub changed_files: Vec<PathBuf>,

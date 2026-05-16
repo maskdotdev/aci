@@ -5,6 +5,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Language-neutral symbol categories.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SymbolKind {
@@ -20,6 +21,7 @@ pub enum SymbolKind {
     Unknown,
 }
 
+/// Language-neutral graph node categories.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum NodeKind {
@@ -36,6 +38,7 @@ pub enum NodeKind {
     Chunk,
 }
 
+/// Language-neutral graph edge categories.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum EdgeKind {
@@ -52,6 +55,7 @@ pub enum EdgeKind {
     Tests,
 }
 
+/// Node in a per-file graph partition.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GraphNode {
     pub id: NodeId,
@@ -69,6 +73,7 @@ pub struct GraphNode {
 }
 
 impl GraphNode {
+    /// Creates a node with a deterministic id from repository, file, kind, name, and span.
     pub fn deterministic(
         repo_id: &RepositoryId,
         file_id: Option<&FileId>,
@@ -109,11 +114,13 @@ impl GraphNode {
         }
     }
 
+    /// Sets the symbol kind for fluent node construction.
     pub fn with_symbol_kind(mut self, symbol_kind: SymbolKind) -> Self {
         self.symbol_kind = Some(symbol_kind);
         self
     }
 
+    /// Sets fact provenance and confidence for fluent node construction.
     pub fn with_fact_quality(mut self, provenance: FactProvenance, confidence: Confidence) -> Self {
         self.provenance = provenance;
         self.confidence = confidence;
@@ -121,6 +128,7 @@ impl GraphNode {
     }
 }
 
+/// Directed edge between two graph nodes.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GraphEdge {
     pub id: EdgeId,
@@ -135,6 +143,7 @@ pub struct GraphEdge {
 }
 
 impl GraphEdge {
+    /// Creates an edge with a deterministic id from kind, endpoints, and span.
     pub fn deterministic(
         kind: EdgeKind,
         from: &NodeId,
@@ -156,6 +165,7 @@ impl GraphEdge {
         }
     }
 
+    /// Sets fact provenance and confidence for fluent edge construction.
     pub fn with_fact_quality(mut self, provenance: FactProvenance, confidence: Confidence) -> Self {
         self.provenance = provenance;
         self.confidence = confidence;
@@ -163,6 +173,7 @@ impl GraphEdge {
     }
 }
 
+/// Source file loaded for indexing.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SourceFile {
     pub repo_id: RepositoryId,
@@ -174,6 +185,7 @@ pub struct SourceFile {
 }
 
 impl SourceFile {
+    /// Creates a source file with a deterministic file id and content fingerprint.
     pub fn new(
         repo_id: RepositoryId,
         repo_root: &Path,
@@ -196,6 +208,7 @@ impl SourceFile {
     }
 }
 
+/// Complete graph facts extracted from one source file.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GraphPartition {
     pub file_id: FileId,
@@ -210,6 +223,7 @@ pub struct GraphPartition {
 }
 
 impl GraphPartition {
+    /// Creates an empty partition preserving file identity and fingerprint.
     pub fn empty(file: &SourceFile) -> Self {
         Self {
             file_id: file.file_id.clone(),
@@ -224,18 +238,21 @@ impl GraphPartition {
     }
 }
 
+/// Basic per-file extraction timings.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PartitionMetrics {
     pub parse_time_micros: u64,
     pub extraction_time_micros: u64,
 }
 
+/// Loaded graph state across all indexed file partitions.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GraphSnapshot {
     pub partitions: Vec<GraphPartition>,
 }
 
 impl GraphSnapshot {
+    /// Replaces the partition with the same file id, or appends it when absent.
     pub fn replace_partition(&mut self, replacement: GraphPartition) {
         if let Some(existing) = self
             .partitions
@@ -249,6 +266,7 @@ impl GraphSnapshot {
     }
 }
 
+/// Normalizes a path to a slash-separated stable key.
 pub fn normalize_path(path: &Path) -> String {
     path.components()
         .filter_map(|component| {

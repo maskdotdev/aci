@@ -1,6 +1,7 @@
 use aci_core::{GraphPartition, Language};
 use std::collections::BTreeMap;
 
+/// Aggregate indexing metrics that can be computed without retaining partitions.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct IndexSummary {
     pub indexed_files: usize,

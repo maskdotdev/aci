@@ -1,3 +1,9 @@
+//! Language detection and structural extraction adapters.
+//!
+//! Adapters convert source files into the neutral `aci-core` graph model. The
+//! default registry prefers Tree-sitter backed extraction where available and
+//! keeps scanner fallbacks behind the same adapter boundary.
+
 use aci_core::{GraphPartition, Language, SourceFile};
 use std::path::Path;
 
@@ -5,25 +11,33 @@ pub mod helpers;
 pub mod languages;
 pub mod tree_sitter;
 
+/// A language-specific detector and extractor.
 pub trait LanguageAdapter: Send + Sync {
+    /// The language emitted by this adapter.
     fn language(&self) -> Language;
+    /// Returns whether `path` is a plausible input before file bytes are read.
     fn path_candidate(&self, _path: &Path) -> bool {
         true
     }
+    /// Returns whether the adapter should handle this path and file content.
     fn detect(&self, path: &Path, bytes: &[u8]) -> bool;
+    /// Extracts a per-file graph partition from `file`.
     fn extract(&self, file: &SourceFile) -> GraphPartition;
 }
 
+/// Ordered collection of language adapters used by the indexer.
 #[derive(Default)]
 pub struct AdapterRegistry {
     adapters: Vec<Box<dyn LanguageAdapter>>,
 }
 
 impl AdapterRegistry {
+    /// Creates an empty registry.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Creates a registry with all built-in adapters in detection order.
     pub fn with_defaults() -> Self {
         Self::new()
             .register(languages::objective_c::ObjectiveCAdapter)
@@ -38,11 +52,13 @@ impl AdapterRegistry {
             .register(languages::python::PythonAdapter)
     }
 
+    /// Adds an adapter to the end of the detection order.
     pub fn register(mut self, adapter: impl LanguageAdapter + 'static) -> Self {
         self.adapters.push(Box::new(adapter));
         self
     }
 
+    /// Detects the language for `path` and `bytes`, or `Language::Unknown`.
     pub fn detect_language(&self, path: &Path, bytes: &[u8]) -> Language {
         self.adapters
             .iter()
@@ -51,12 +67,14 @@ impl AdapterRegistry {
             .unwrap_or(Language::Unknown)
     }
 
+    /// Returns whether any registered adapter may handle `path`.
     pub fn path_candidate(&self, path: &Path) -> bool {
         self.adapters
             .iter()
             .any(|adapter| adapter.path_candidate(path))
     }
 
+    /// Extracts a graph partition for `file` using its detected language.
     pub fn extract(&self, file: &SourceFile) -> GraphPartition {
         self.adapters
             .iter()
@@ -66,6 +84,7 @@ impl AdapterRegistry {
     }
 }
 
+/// Creates the default registry used by the indexing pipeline.
 pub fn default_registry() -> AdapterRegistry {
     AdapterRegistry::with_defaults()
 }

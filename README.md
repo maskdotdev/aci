@@ -52,6 +52,12 @@ Unsupported, binary, generated, and vendor paths are skipped before parsing.
 
 ## Quickstart
 
+Install the latest release:
+
+```sh
+curl -fsSL https://aci.mask.dev/install.sh | sh
+```
+
 Run the tests:
 
 ```sh
@@ -123,6 +129,8 @@ Use this as the local quality gate before committing:
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+./scripts/validate-packaging.sh
 ```
 
 Benchmark and budget scripts live under `scripts/`:
@@ -157,6 +165,11 @@ Snapshots are optional compaction artifacts for faster query startup.
 - [Troubleshooting](docs/troubleshooting.md)
 - [Release checklist](docs/release-checklist.md)
 - [Tree-sitter production plan](docs/tree-sitter-production-plan.md)
+
+## Contributing and Security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, validation, and pull request
+expectations. See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 ## Current Limits
 

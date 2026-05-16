@@ -1,3 +1,9 @@
+//! Query engine for loaded ACI graph snapshots.
+//!
+//! This crate provides library-first queries for symbols, dependencies,
+//! callers, callees, references, package dependencies, dependency trees, and
+//! impact analysis. The CLI is a thin wrapper around these APIs.
+
 use aci_core::{
     EdgeKind, FileId, GraphEdge, GraphNode, GraphSnapshot, NodeId, NodeKind, SymbolKind,
     prefer_fact,
@@ -6,6 +12,7 @@ use aci_store::{AdjacencyIndex, build_adjacency};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
+/// In-memory query view over a graph snapshot.
 pub struct QueryEngine {
     snapshot: GraphSnapshot,
     adjacency: AdjacencyIndex,
@@ -13,6 +20,7 @@ pub struct QueryEngine {
 }
 
 impl QueryEngine {
+    /// Builds adjacency and node indexes for a loaded snapshot.
     pub fn new(snapshot: GraphSnapshot) -> Self {
         let adjacency = build_adjacency(&snapshot);
         let nodes = snapshot
@@ -28,6 +36,7 @@ impl QueryEngine {
         }
     }
 
+    /// Returns all symbol nodes in deterministic node-id order.
     pub fn symbols(&self) -> Vec<&GraphNode> {
         self.nodes
             .values()
@@ -35,6 +44,7 @@ impl QueryEngine {
             .collect()
     }
 
+    /// Looks up symbols by optional name, qualified name, file path, and kind.
     pub fn lookup_symbols(
         &self,
         name: Option<&str>,
@@ -80,6 +90,7 @@ impl QueryEngine {
         selected.into_values().collect()
     }
 
+    /// Returns symbols whose simple or qualified name exactly matches.
     pub fn matching_symbols(&self, symbol_name: &str) -> Vec<&GraphNode> {
         self.symbols()
             .into_iter()
@@ -90,6 +101,7 @@ impl QueryEngine {
             .collect()
     }
 
+    /// Returns import and package dependency labels for a file.
     pub fn file_dependencies(&self, file: &Path) -> Vec<String> {
         self.partition_for_path(file)
             .map(|partition| {
@@ -108,6 +120,7 @@ impl QueryEngine {
             .unwrap_or_default()
     }
 
+    /// Returns package dependency names found across the snapshot.
     pub fn package_dependencies(&self) -> Vec<String> {
         self.snapshot
             .partitions
@@ -120,6 +133,7 @@ impl QueryEngine {
             .collect()
     }
 
+    /// Returns nodes called by the symbol node id.
     pub fn callees(&self, symbol: &NodeId) -> Vec<&GraphNode> {
         self.edges_from(symbol, EdgeKind::Calls)
             .into_iter()
@@ -127,6 +141,7 @@ impl QueryEngine {
             .collect()
     }
 
+    /// Returns nodes that call a symbol by simple or qualified name.
     pub fn callers(&self, symbol_name: &str) -> Vec<&GraphNode> {
         let targets: BTreeSet<NodeId> = self
             .nodes
@@ -144,6 +159,7 @@ impl QueryEngine {
             .collect()
     }
 
+    /// Returns nodes that reference a symbol by simple or qualified name.
     pub fn references(&self, target_name: &str) -> Vec<&GraphNode> {
         let targets: BTreeSet<NodeId> = self
             .nodes
@@ -161,6 +177,7 @@ impl QueryEngine {
             .collect()
     }
 
+    /// Returns files that directly depend on any changed file.
     pub fn impact_from_files(&self, files: &[PathBuf]) -> Vec<PathBuf> {
         let changed: BTreeSet<FileId> = files
             .iter()

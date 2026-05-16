@@ -13,6 +13,7 @@ pub(crate) struct DependencyIndexWriter {
     paths: HashMap<PathBuf, u32>,
 }
 
+/// Incremental reindex plan derived from persisted dependency indexes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StoreIncrementalPlan {
     pub changed_files: Vec<PathBuf>,

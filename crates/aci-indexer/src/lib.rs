@@ -1,3 +1,10 @@
+//! Repository discovery and indexing pipeline orchestration.
+//!
+//! `aci-indexer` walks repositories, filters files, fingerprints source bytes,
+//! invokes language adapters, and streams per-file graph partitions into a
+//! caller-provided sink or store. The pipeline keeps indexing incremental by
+//! planning direct changes plus reverse dependencies.
+
 mod discover;
 mod incremental;
 mod pipeline;

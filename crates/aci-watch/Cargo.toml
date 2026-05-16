@@ -1,9 +1,14 @@
 [package]
 name = "aci-watch"
 version = "0.1.0"
+description = "Filesystem watch and debounce helpers for incremental ACI indexing."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+categories = ["development-tools", "filesystem"]
+keywords = ["code-index", "watch", "incremental"]
 
 [lints]
 workspace = true

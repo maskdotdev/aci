@@ -1,9 +1,14 @@
 [package]
 name = "aci-indexer"
 version = "0.1.0"
+description = "Repository discovery, fingerprinting, scheduling, and indexing pipeline orchestration for ACI."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+categories = ["development-tools"]
+keywords = ["code-index", "incremental", "graph"]
 
 [lints]
 workspace = true

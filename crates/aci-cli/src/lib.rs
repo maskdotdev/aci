@@ -1,3 +1,8 @@
+//! Command-line entry point wiring for the ACI binary.
+//!
+//! The CLI crate parses arguments and delegates to the library crates for
+//! indexing, querying, exporting, benchmarking, and watching.
+
 use anyhow::Result;
 
 mod args;
@@ -19,6 +24,7 @@ pub(crate) use index::{normalize_changed_paths, reindex_changed, run_index_comma
 pub use query::run_query;
 
 impl Cli {
+    /// Dispatches the parsed command to its command implementation.
     pub fn run(self) -> Result<()> {
         match self.command {
             args::Command::Index(args) => index::run_index(args),

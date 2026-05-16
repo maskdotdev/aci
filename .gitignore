@@ -1,3 +1,5 @@
 /target/
 /.aci/
 .vercel
+dummy/
+.DS_Store

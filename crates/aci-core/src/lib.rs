@@ -1,3 +1,11 @@
+//! Shared graph primitives for ACI.
+//!
+//! This crate owns the neutral data model used by every other crate: stable
+//! IDs, source spans, file and symbol graph nodes, edges, diagnostics, and fact
+//! quality metadata. Language parsers, storage backends, query engines, and
+//! exporters should translate into or out of these types instead of introducing
+//! parser-specific graph shapes.
+
 mod diagnostics;
 mod ids;
 mod language;

@@ -14,4 +14,15 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+      - run: ./scripts/validate-packaging.sh
       - run: ./scripts/check-loc.sh
+      - run: sh -n site/install.sh
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit

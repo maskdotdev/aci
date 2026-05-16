@@ -1,3 +1,9 @@
+//! Filesystem watch helpers for incremental indexing.
+//!
+//! The watcher collects file-system events until the stream is quiet for a
+//! debounce interval, then returns a stable set of changed paths for the CLI to
+//! pass into incremental reindex planning.
+
 use aci_core::Result;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::BTreeSet;
@@ -5,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
+/// Root path and debounce interval for a watch pass.
 #[derive(Clone, Debug)]
 pub struct WatchOptions {
     pub root: PathBuf,
@@ -12,6 +19,7 @@ pub struct WatchOptions {
 }
 
 impl WatchOptions {
+    /// Creates watch options with the default debounce interval.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
@@ -20,11 +28,13 @@ impl WatchOptions {
     }
 }
 
+/// Deduplicated changed paths observed during a watch pass.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CoalescedChanges {
     pub paths: Vec<PathBuf>,
 }
 
+/// Deduplicates paths from notify events.
 pub fn coalesce_events(events: &[Event]) -> CoalescedChanges {
     let paths = events
         .iter()
@@ -35,6 +45,7 @@ pub fn coalesce_events(events: &[Event]) -> CoalescedChanges {
     CoalescedChanges { paths }
 }
 
+/// Watches until the debounce interval is quiet or `max_wait` is reached.
 pub fn watch_until_quiet(options: WatchOptions, max_wait: Duration) -> Result<CoalescedChanges> {
     let (tx, rx) = mpsc::channel();
     let mut watcher: RecommendedWatcher = notify::recommended_watcher(move |event| {

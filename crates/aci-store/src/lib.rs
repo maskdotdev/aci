@@ -1,3 +1,9 @@
+//! Persistent storage for ACI graph snapshots.
+//!
+//! Stores are partitioned by file. Full writes replace the manifest and packed
+//! partition data, while incremental writes append replacement records and keep
+//! symbol/dependency indexes available when no delta replay is required.
+
 mod compact;
 mod dependencies;
 mod graph;
@@ -23,6 +29,7 @@ pub use types::{
 pub use write::PartitionWriter;
 
 impl GraphStore {
+    /// Looks up prebuilt symbol-index entries when no delta log replay is needed.
     pub fn lookup_symbol_index(
         &self,
         name: Option<&str>,
@@ -33,6 +40,7 @@ impl GraphStore {
         symbols::lookup(&self.root, name)
     }
 
+    /// Uses the persisted dependency index to plan changed and dependent files.
     pub fn plan_incremental_reindex(
         &self,
         changed_paths: &[std::path::PathBuf],

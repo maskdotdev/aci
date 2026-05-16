@@ -9,9 +9,20 @@ permissions:
   contents: write
 
 jobs:
+  validate:
+    name: Validate release inputs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: ./scripts/validate-packaging.sh
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+      - run: sh -n site/install.sh
+
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
@@ -34,6 +45,11 @@ jobs:
           cp "target/${{ matrix.target }}/release/aci" dist/aci
           chmod 0755 dist/aci
           tar -C dist -czf "aci-${{ matrix.target }}.tar.gz" aci
+      - name: Verify archive
+        run: |
+          tmp_dir="$(mktemp -d)"
+          tar -xzf "aci-${{ matrix.target }}.tar.gz" -C "$tmp_dir"
+          "$tmp_dir/aci" --help
       - uses: actions/upload-artifact@v4
         with:
           name: aci-${{ matrix.target }}

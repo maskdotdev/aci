@@ -1,3 +1,10 @@
+//! Import and export formats for ACI graph snapshots.
+//!
+//! JSONL is the lossless internal interchange format. The SCIP, LSIF, and
+//! KiteDB writers are compatibility shapes around the neutral graph model, and
+//! enrichment import helpers merge external semantic facts back into ACI
+//! partitions.
+
 use aci_core::{
     Confidence, EdgeKind, FactProvenance, GraphEdge, GraphNode, GraphPartition, GraphSnapshot,
     Language, LineColumn, NodeKind, PartitionMetrics, RepositoryId, Result, SourceFile, SourceSpan,
@@ -7,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{BufRead, Read, Write};
 use std::path::Path;
 
+/// Supported graph export encodings.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExportFormat {
     Jsonl,
@@ -29,6 +37,7 @@ impl std::str::FromStr for ExportFormat {
     }
 }
 
+/// Lossless JSONL record emitted for ACI graph snapshots.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum JsonlRecord {
@@ -73,6 +82,7 @@ struct ScipFile<'a> {
     symbols: Vec<&'a GraphNode>,
 }
 
+/// Writes `snapshot` in the requested export format.
 pub fn export_snapshot<W: Write>(
     snapshot: &GraphSnapshot,
     format: ExportFormat,
@@ -105,6 +115,7 @@ pub fn export_snapshot<W: Write>(
     }
 }
 
+/// Reads the lossless JSONL export format into a graph snapshot.
 pub fn import_jsonl<R: BufRead>(reader: R) -> Result<GraphSnapshot> {
     let mut partitions: Vec<GraphPartition> = Vec::new();
     for line in reader.lines() {
@@ -162,11 +173,13 @@ pub fn import_jsonl<R: BufRead>(reader: R) -> Result<GraphSnapshot> {
     Ok(GraphSnapshot { partitions })
 }
 
+/// Minimal SCIP-shaped input accepted for semantic enrichment imports.
 #[derive(Clone, Debug, Deserialize)]
 pub struct ScipInput {
     pub documents: Vec<ScipInputDocument>,
 }
 
+/// SCIP document entry with a repository-relative path.
 #[derive(Clone, Debug, Deserialize)]
 pub struct ScipInputDocument {
     #[serde(rename = "relativePath")]
@@ -175,6 +188,7 @@ pub struct ScipInputDocument {
     pub occurrences: Vec<ScipOccurrence>,
 }
 
+/// SCIP occurrence used to create or upgrade external symbol facts.
 #[derive(Clone, Debug, Deserialize)]
 pub struct ScipOccurrence {
     pub symbol: String,
@@ -184,6 +198,7 @@ pub struct ScipOccurrence {
     pub roles: u32,
 }
 
+/// Imports SCIP-shaped semantic facts as graph partitions.
 pub fn import_scip_enrichment<R: Read>(
     repo_id: RepositoryId,
     repo_root: &Path,
@@ -250,11 +265,13 @@ pub fn import_scip_enrichment<R: Read>(
     Ok(snapshot)
 }
 
+/// Minimal LSP-shaped input accepted for semantic enrichment imports.
 #[derive(Clone, Debug, Deserialize)]
 pub struct LspInput {
     pub documents: Vec<LspInputDocument>,
 }
 
+/// LSP document entry with a URI and symbol facts.
 #[derive(Clone, Debug, Deserialize)]
 pub struct LspInputDocument {
     pub uri: String,
@@ -262,6 +279,7 @@ pub struct LspInputDocument {
     pub facts: Vec<LspFact>,
 }
 
+/// LSP semantic fact for a symbol occurrence.
 #[derive(Clone, Debug, Deserialize)]
 pub struct LspFact {
     pub symbol: String,
@@ -269,6 +287,7 @@ pub struct LspFact {
     pub range: LspRange,
 }
 
+/// Whether an LSP fact is a definition or reference.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum LspFactKind {
@@ -276,18 +295,21 @@ pub enum LspFactKind {
     Reference,
 }
 
+/// Zero-based LSP range.
 #[derive(Clone, Debug, Deserialize)]
 pub struct LspRange {
     pub start: LspPosition,
     pub end: LspPosition,
 }
 
+/// Zero-based LSP position.
 #[derive(Clone, Debug, Deserialize)]
 pub struct LspPosition {
     pub line: u32,
     pub character: u32,
 }
 
+/// Imports LSP-shaped semantic facts as graph partitions.
 pub fn import_lsp_enrichment<R: Read>(
     repo_id: RepositoryId,
     repo_root: &Path,

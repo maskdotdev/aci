@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+/// Source system that produced a graph fact.
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
 )]
@@ -15,6 +16,7 @@ pub enum FactProvenance {
 }
 
 impl FactProvenance {
+    /// Relative authority used when merging duplicate facts.
     pub fn rank(self) -> u8 {
         match self {
             Self::StructuralScanner => 1,
@@ -27,6 +29,7 @@ impl FactProvenance {
     }
 }
 
+/// Confidence assigned to a graph fact.
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
 )]
@@ -39,6 +42,7 @@ pub enum Confidence {
     Exact,
 }
 
+/// Returns true when `candidate` should replace `existing`.
 pub fn prefer_fact(
     existing: (FactProvenance, Confidence),
     candidate: (FactProvenance, Confidence),

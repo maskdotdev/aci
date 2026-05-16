@@ -601,17 +601,17 @@
             <div class="bench-grid">
               <article class="bench reveal">
                 <div class="bench-icon">NX</div>
-                <div class="bench-value">1.51s</div>
+                <div class="bench-value">4.02s</div>
                 <h3>Next.js canary</h3>
-                <p class="bench-meta">commit 8980f3a76aa5bc7c2ec93a39cd5d81a7502800f1</p>
-                <ul><li>Indexed files: <code>21,869</code></li><li>Nodes: <code>435,553</code></li><li>Edges: <code>616,376</code></li><li>Diagnostics: <code>379</code></li></ul>
+                <p class="bench-meta">commit 300993781541bf7a35789e22adb0333bf9c44caf</p>
+                <ul><li>Indexed files: <code>21,847</code></li><li>Skipped: <code>1,615</code></li><li>Parse / file: <code>0.51ms</code></li><li>Diagnostics: <code>0</code></li></ul>
               </article>
               <article class="bench reveal reveal-d1">
-                <div class="bench-icon">CH</div>
-                <div class="bench-value">40.74s</div>
-                <h3>Chromium local checkout</h3>
-                <p class="bench-meta">commit 81c154bee3c796d05d993b89e44bf43e3ac92bd9</p>
-                <ul><li>Indexed files: <code>149,287</code></li><li>Nodes: <code>8,635,542</code></li><li>Edges: <code>15,819,485</code></li><li>Skipped: <code>253,039</code></li></ul>
+                <div class="bench-icon">DJ</div>
+                <div class="bench-value">1.52s</div>
+                <h3>Django main</h3>
+                <p class="bench-meta">commit 62fa9b8976b9fd74440e9f97c0744feaf3165dc9</p>
+                <ul><li>Indexed files: <code>3,003</code></li><li>Skipped: <code>1,456</code></li><li>Parse / file: <code>2.16ms</code></li><li>Diagnostics: <code>0</code></li></ul>
               </article>
             </div>
           </div>
@@ -631,7 +631,7 @@
       /* ── Terminal typing effect ── */
       const lines = [
         { type: 'cmd', text: '$ aci index .' },
-        { type: 'out', text: 'indexed 21869 files, skipped 970, diagnostics 379 in 2.59s' },
+        { type: 'out', text: 'indexed 21847 files, skipped 1615, diagnostics 0 in 4.02s' },
         { type: 'gap' },
         { type: 'cmd', text: '$ aci query --pretty symbols --name NextConfig' },
         { type: 'out', text: 'Symbol                    Kind       Location' },

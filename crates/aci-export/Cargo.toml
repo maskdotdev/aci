@@ -1,9 +1,14 @@
 [package]
 name = "aci-export"
 version = "0.1.0"
+description = "JSONL, SCIP-shaped, LSIF-shaped, and KiteDB-shaped export support for ACI graphs."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+categories = ["development-tools"]
+keywords = ["code-index", "export", "scip"]
 
 [lints]
 workspace = true

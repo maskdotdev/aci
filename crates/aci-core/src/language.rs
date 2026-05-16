@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+/// Source language detected for a file.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Language {
@@ -17,6 +18,7 @@ pub enum Language {
 }
 
 impl Language {
+    /// Returns the stable lowercase key for this language.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::C => "c",
